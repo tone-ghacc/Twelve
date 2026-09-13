@@ -1,4 +1,4 @@
-import { Game, FlickGesture, KEYS, LABELS, DURATION } from './engine.mjs';
+import { Game, FlickGesture, KEYS, LABELS, DURATION, HOLD_INTERVAL, holdTickCount } from './engine.mjs';
 const $=id=>document.getElementById(id),canvas=$('game'),ctx=canvas.getContext('2d');
 let game,phase='ready',elapsed=0,epoch=0,audio,master,scheduledStep=0,frameTime=0,judgeUntil=0;
 const keys=new Set(),pointers=new Map(),effects=[],voices=new Set();
@@ -6,7 +6,7 @@ const held=()=>new Set([...keys,...[...pointers.values()].map(p=>p.lane)]);
 let width=0,height=0,ratio=1;
 function resize(){const r=canvas.getBoundingClientRect();width=r.width;height=r.height;ratio=Math.min(devicePixelRatio||1,2);canvas.width=Math.round(width*ratio);canvas.height=Math.round(height*ratio);ctx.setTransform(ratio,0,0,ratio,0,0);}
 new ResizeObserver(resize).observe(canvas);
-function newGame(){game=new Game($('auto').checked);game.onJudge=(grade,n)=>{ $('score').textContent=String(game.score).padStart(7,'0');$('combo').textContent=game.combo;$('combo-box').style.display=game.combo>0?'block':'none';$('judgement').textContent=grade;$('judgement').style.color=grade==='MISS'?'#ff8291':n.type==='flick'?'#c68aff':grade==='HOLD'?'#70dcf8':'#b9f78d';judgeUntil=performance.now()+550;if(grade!=='MISS')effects.push({lane:n.lane,width:n.width,start:performance.now(),hold:!!n.duration,flick:n.type==='flick'});};}
+function newGame(){game=new Game($('auto').checked);game.onJudge=(grade,n)=>{ $('score').textContent=String(game.score).padStart(7,'0');$('combo').textContent=game.combo;$('combo-box').style.display=game.combo>0?'block':'none';$('judgement').textContent=grade;$('judgement').style.color=grade==='MISS'?'#ff8291':n.type==='flick'?'#c68aff':n.duration?'#70dcf8':'#b9f78d';judgeUntil=performance.now()+550;if(grade!=='MISS')effects.push({lane:n.lane,width:n.width,start:performance.now(),hold:!!n.duration,flick:n.type==='flick'});};}
 function audioInit(){if(!audio){audio=new (window.AudioContext||window.webkitAudioContext)();master=audio.createGain();master.gain.value=Number($('volume').value)/100*.38;master.connect(audio.destination);}return audio.resume();}
 function tone(freq,at,duration,type='sine',level=.16,slide=0){const o=audio.createOscillator(),g=audio.createGain();o.type=type;o.frequency.setValueAtTime(freq,at);if(slide)o.frequency.exponentialRampToValueAtTime(slide,at+duration);g.gain.setValueAtTime(.001,at);g.gain.exponentialRampToValueAtTime(level,at+.006);g.gain.exponentialRampToValueAtTime(.001,at+duration);o.connect(g);g.connect(master);o.start(at);o.stop(at+duration+.015);voices.add(o);o.onended=()=>{voices.delete(o);g.disconnect();o.disconnect();};}
 function silence(){for(const v of voices){try{v.stop();}catch{}}voices.clear();}
@@ -14,8 +14,8 @@ function schedule(){const melody=[0,7,12,14,7,12,3,7,0,10,12,7,3,7,10,14],roots=
 function time(){return phase==='playing'?Math.min(DURATION,audio.currentTime-epoch):elapsed;}
 function setPhase(p){phase=p;$('state-label').textContent=({ready:'READY',playing:game.auto?'AUTO PLAY':'PLAYING',paused:'PAUSED',ended:'FINISHED'})[p];$('pause').disabled=p==='ready'||p==='ended';$('pause').textContent=p==='playing'?'Ⅱ 一時停止':'▶ 再生';$('auto').disabled=p==='playing'||p==='paused';}
 async function start(){if(phase==='playing')return;if(phase==='paused'){await resume();return;}try{await audioInit();}catch{$('overlay-description').textContent='音声を開始できませんでした。もう一度お試しください。';return;}silence();keys.clear();pointers.clear();newGame();elapsed=0;scheduledStep=0;epoch=audio.currentTime;$('overlay').style.display='none';$('score').textContent='0000000';$('combo-box').style.display='none';$('judgement').textContent='';setPhase('playing');}
-function pause(){if(phase!=='playing')return;elapsed=time();silence();setPhase('paused');keys.clear();pointers.clear();showOverlay('PAUSED','ひと休み。','ホールド中なら、再開したらすぐにキーを押してください。','▶ 続ける');}
-async function resume(){try{await audioInit();}catch{return;}epoch=audio.currentTime-elapsed;scheduledStep=Math.max(0,Math.ceil((elapsed-2)/.25));keys.clear();pointers.clear();game.graceUntil=elapsed+.3;setPhase('playing');$('overlay').style.display='none';}
+function pause(){if(phase!=='playing')return;elapsed=time();game.update(elapsed,held());silence();setPhase('paused');keys.clear();pointers.clear();game.update(elapsed,held());showOverlay('PAUSED','ひと休み。','ホールドは途中からでも押し直せます。','▶ 続ける');}
+async function resume(){try{await audioInit();}catch{return;}epoch=audio.currentTime-elapsed;scheduledStep=Math.max(0,Math.ceil((elapsed-2)/.25));keys.clear();pointers.clear();setPhase('playing');$('overlay').style.display='none';}
 function showOverlay(label,title,description,button){$('overlay').style.display='flex';$('overlay-label').textContent=label;$('overlay-title').textContent=title;$('overlay-description').textContent=description;$('start').textContent=button;}
 function reset(){silence();elapsed=0;keys.clear();pointers.clear();effects.length=0;newGame();setPhase('ready');$('score').textContent='0000000';$('combo-box').style.display='none';$('judgement').textContent='';showOverlay('12 LANES. YOUR RHYTHM.','リズムを、つかもう。','赤はタップ。水色は長押し。紫はフリック。','▶ プレイする');}
 function end(){elapsed=DURATION;setPhase('ended');keys.clear();pointers.clear();showOverlay(game.auto?'AUTO PLAY COMPLETE':'PLAY COMPLETE',game.auto?'譜面再生が完了しました':'おつかれさま！',`PERFECT ${game.perfect} · GOOD ${game.good} · MISS ${game.miss} / MAX COMBO ${game.maxCombo}`,'↺ もう一度プレイ');}
@@ -30,8 +30,9 @@ function draw(now){
     if(n.state==='hit'||n.state==='miss')continue;
     const y=hitY-(n.time-elapsed)*pps,tail=hitY-(n.time+n.duration-elapsed)*pps;
     if(y<-20||tail>height)continue;
-    const x=n.lane*laneW+3,w=n.width*laneW-6,head=n.state==='holding'?hitY:y;
+    const x=n.lane*laneW+3,w=n.width*laneW-6,head=n.duration?Math.min(y,hitY):y;
     if(n.duration){const body=ctx.createLinearGradient(0,Math.min(tail,head-1),0,head);body.addColorStop(0,'#70dcf822');body.addColorStop(1,n.state==='holding'?'#70dcf8b0':'#70dcf863');ctx.fillStyle=body;ctx.fillRect(x,tail,w,head-tail);ctx.fillStyle='#70dcf87a';ctx.fillRect(x,tail,2,head-tail);ctx.fillRect(x+w-2,tail,2,head-tail);ctx.fillStyle='#a0ebff';ctx.fillRect(x,tail,w,3);}
+    if(n.duration){ctx.fillStyle=n.state==='holding'?'#bcefff80':'#70dcf840';for(let tick=n.nextTick;tick<holdTickCount(n.duration);tick++){const tickTime=n.time+Math.min(tick*HOLD_INTERVAL,n.duration),tickY=hitY-(tickTime-elapsed)*pps;if(tickY>=0&&tickY<head-7)ctx.fillRect(x+3,tickY,Math.max(0,w-6),1);}}
     const isFlick=n.type==='flick',color=isFlick?'#b875ff':n.duration?'#70dcf8':'#ff4e64';
     ctx.shadowColor=color;ctx.shadowBlur=n.state==='holding'?20:10;ctx.fillStyle=color;ctx.fillRect(x,head-6,w,12);ctx.shadowBlur=0;ctx.fillStyle=isFlick?'#e5c9ff':n.duration?'#c5f4ff':'#ffb1bb';ctx.fillRect(x,head-6,w,2);
     if(isFlick){
@@ -51,7 +52,7 @@ function draw(now){
   for(let l=0;l<12;l++){ctx.fillStyle=active.has(l)?'#b9f78d':'#8392a6';ctx.font=`500 ${Math.max(12,Math.min(16,laneW*.4))}px sans-serif`;ctx.textAlign='center';ctx.fillText(LABELS[l],laneW*(l+.5),height-33);ctx.fillStyle='#65758c';ctx.font='10px sans-serif';ctx.fillText(String(l+1).padStart(2,'0'),laneW*(l+.5),height-14);}
 }
 function frame(now){if(phase==='playing'){elapsed=time();game.update(elapsed,held());schedule();if(elapsed>=DURATION)end();}if(now>judgeUntil)$('judgement').textContent='';draw(now);if(now-frameTime>100){$('elapsed').textContent=`0:${String(Math.floor(elapsed)).padStart(2,'0')}`;$('progress-fill').style.width=`${elapsed/DURATION*100}%`;document.querySelector('.progress').setAttribute('aria-valuenow',String(Math.floor(elapsed)));frameTime=now;}requestAnimationFrame(frame);}
-function press(lane){if(phase==='playing')game.press(lane,time());}
+function press(lane){if(phase==='playing'){const t=time();game.update(t,held());game.press(lane,t);}}
 window.addEventListener('keydown',e=>{if(e.target.matches('input,select,button,a'))return;if(e.code==='Space'){e.preventDefault();if(!e.repeat){if(phase==='playing')pause();else if(phase==='paused')resume();else start();}return;}const lane=KEYS.indexOf(e.code);if(lane<0)return;e.preventDefault();if(!e.repeat){keys.add(lane);press(lane);}});
 window.addEventListener('keyup',e=>{const lane=KEYS.indexOf(e.code);if(lane>=0){keys.delete(lane);if(phase==='playing')game.update(time(),held());}});
 const pointerLane=e=>Math.max(0,Math.min(11,Math.floor((e.clientX-canvas.getBoundingClientRect().left)/width*12)));
