@@ -3,15 +3,15 @@ export const KEYS = ['KeyQ','KeyW','KeyE','KeyR','KeyT','KeyY','KeyU','KeyI','Ke
 export const LABELS = ['Q','W','E','R','T','Y','U','I','O','P','[',']'];
 export function createChart() {
   const notes = [];
-  const add = (time,lane,width=1,duration=0) => notes.push({time,lane,width,duration});
-  add(2,0,2); add(2.5,3,2); add(3,6,3); add(3.5,10,2);
+  const add = (time,lane,width=1,duration=0,type=duration?'hold':'tap') => notes.push({time,lane,width,duration,type});
+  add(2,0,2); add(2.5,3,2,0,'flick'); add(3,6,3); add(3.5,10,2);
   add(4,1,3,1.5); add(4.5,7,2); add(5,10,2); add(6,6,4,1.5); add(6.5,1,2); add(7,3,2);
   for(let block=0;block<7;block++) {
     const t=8+block*4, flip=block%2;
     add(t,flip?8:0,3); add(t+.5,flip?5:3,2); add(t+1,flip?1:8,3,1.5);
-    add(t+1.5,flip?8:1,2); add(t+2,flip?5:4,2); add(t+3,flip?7:0,4); add(t+3.5,flip?1:7,3);
+    add(t+1.5,flip?8:1,2); add(t+2,flip?5:4,2); add(t+3,flip?7:0,4,0,'flick'); add(t+3.5,flip?1:7,3);
   }
-  add(36,0,4,1.5); add(36,8,4,1.5); add(38,0,12);
+  add(36,0,4,1.5); add(36,8,4,1.5); add(38,0,12,0,'flick');
   return notes.sort((a,b)=>a.time-b.time).map((n,id)=>({...n,id,state:'pending'}));
 }
 export class Game {
@@ -25,10 +25,15 @@ export class Game {
   }
   press(lane,t) {
     if(this.auto)return;
-    const n=this.notes.filter(n=>n.state==='pending'&&this.covers(n,lane)&&Math.abs(n.time-t)<=.16).sort((a,b)=>Math.abs(a.time-t)-Math.abs(b.time-t))[0];
+    const n=this.notes.filter(n=>n.type!=='flick'&&n.state==='pending'&&this.covers(n,lane)&&Math.abs(n.time-t)<=.16).sort((a,b)=>Math.abs(a.time-t)-Math.abs(b.time-t))[0];
     if(!n)return;
     const grade=Math.abs(n.time-t)<=.075?'PERFECT':'GOOD';
     if(n.duration){n.state='holding';n.grade=grade;this.onJudge('HOLD',n);}else this.finish(n,grade);
+  }
+  flick(lanes,t) {
+    if(this.auto)return;
+    const n=this.notes.filter(n=>n.type==='flick'&&n.state==='pending'&&lanes.some(lane=>this.covers(n,lane))&&Math.abs(n.time-t)<=.16).sort((a,b)=>Math.abs(a.time-t)-Math.abs(b.time-t))[0];
+    if(n)this.finish(n,Math.abs(n.time-t)<=.075?'PERFECT':'GOOD');
   }
   update(t,held) {
     for(const n of this.notes){
@@ -39,5 +44,20 @@ export class Game {
         else if(!this.auto&&t>(this.graceUntil??-1)&&![...held].some(lane=>this.covers(n,lane)))this.finish(n,'MISS');
       }
     }
+  }
+}
+
+// A short movement in any direction, measured in CSS pixels. Each pointer owns
+// its own history; old movement and tiny pointer jitter cannot trigger a flick.
+export class FlickGesture {
+  constructor(x,y,t){this.samples=[{x,y,t}];}
+  move(x,y,t){
+    this.samples=this.samples.filter(p=>t-p.t<=140);
+    const current={x,y,t};
+    const origin=this.samples.find(p=>Math.hypot(x-p.x,y-p.y)>=18);
+    this.samples.push(current);
+    if(!origin)return null;
+    this.samples=[current];
+    return {fromX:origin.x,fromY:origin.y,x,y};
   }
 }
