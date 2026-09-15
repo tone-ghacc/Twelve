@@ -23,7 +23,7 @@ export function createChart() {
     const t=8+block*4, flip=block%2;
     add(t,flip?8:0,3); add(t+.5,flip?5:3,2);
     if(flip){const chain=`wide-chain-${block}`;add(t+1,1,3,1.5,'flick-hold',0,6,chain);add(t+2.5,4,2,.4,block===3?'flick-hold':'hold',3,4,chain);}
-    else add(t+1,8,3,1.5,'hold');
+    else {const chain=`hold-chain-${block}`;add(t+1,8,3,1.5,'hold',8,3,chain);add(t+2.5,9,2,.4,block%4===2?'flick-hold':'hold',8,4,chain);}
     add(t+1.5,flip?8:1,2); add(t+2,flip?5:4,2); add(t+3,flip?7:0,4,0,'flick'); add(t+3.5,flip?1:7,3);
   }
   add(36,0,4,1.5); add(36,8,4,1.5,'flick-hold'); add(38,0,12,0,'flick');
