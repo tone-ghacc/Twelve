@@ -11,9 +11,9 @@ export const flickSpan = n => n.type==='flick-hold'
   : {lane:n.lane,width:n.width};
 export const KEYS = ['KeyQ','KeyW','KeyE','KeyR','KeyT','KeyY','KeyU','KeyI','KeyO','KeyP','BracketLeft','BracketRight'];
 export const LABELS = ['Q','W','E','R','T','Y','U','I','O','P','[',']'];
-export function createChart() {
+export function createDefaultChartData() {
   const notes = [];
-  const add = (time,lane,width=1,duration=0,type=duration?'hold':'tap',flickLane=lane,flickWidth=width,chain=null) => notes.push({time,lane,width,duration,type,flickLane,flickWidth,chain});
+  const add = (time,lane,width=1,duration=0,type=duration?'hold':'tap',flickLane=lane,flickWidth=width,chain=null) => notes.push({timeMs:Math.round(time*1000),lane,width,durationMs:Math.round(duration*1000),type,flickLane,flickWidth,chain});
   add(2,0,2); add(2.5,3,2,0,'flick'); add(3,6,3); add(3.5,10,2);
   add(4,1,3,1.5); add(4.5,7,2); add(5,10,2);
   add(6,6,3,1.5,'flick-hold',3,8,'wide-chain');
@@ -27,10 +27,44 @@ export function createChart() {
     add(t+1.5,flip?8:1,2); add(t+2,flip?5:4,2); add(t+3,flip?7:0,4,0,'flick'); add(t+3.5,flip?1:7,3);
   }
   add(36,0,4,1.5); add(36,8,4,1.5,'flick-hold'); add(38,0,12,0,'flick');
-  return notes.sort((a,b)=>a.time-b.time).map((n,id)=>({...n,id,state:'pending',nextTick:0,holdHits:0,endFlick:null,endJudged:false}));
+  notes.sort((a,b)=>a.timeMs-b.timeMs||a.lane-b.lane).forEach((n,index)=>n.id=`note-${String(index+1).padStart(3,'0')}`);
+  for(const n of notes){
+    if(n.type==='flick-hold')n.endFlick={lane:n.flickLane,width:n.flickWidth};
+    delete n.flickLane;delete n.flickWidth;
+    if(!n.durationMs)delete n.durationMs;
+  }
+  for(const chain of new Set(notes.map(n=>n.chain).filter(Boolean))){const linked=notes.filter(n=>n.chain===chain);if(linked.length===2)linked[0].nextId=linked[1].id;}
+  for(const n of notes)delete n.chain;
+  return {schemaVersion:1,metadata:{title:'First light',artist:'TWELVE',difficulty:'DEMO',laneCount:12,durationMs:40000},timing:{bpm:120,offsetMs:0,timeSignature:[4,4]},notes};
+}
+export function validateChartData(input) {
+  if(!input||input.schemaVersion!==1||!Array.isArray(input.notes))throw new Error('schemaVersion 1 の譜面JSONを指定してください');
+  const chart=structuredClone(input),ids=new Set(),types=new Set(['tap','flick','hold','flick-hold']);
+  chart.metadata={title:String(chart.metadata?.title||'Untitled'),artist:String(chart.metadata?.artist||''),difficulty:String(chart.metadata?.difficulty||'EDIT'),laneCount:12,durationMs:40000};
+  const bpm=Number(chart.timing?.bpm)||120;if(bpm<20||bpm>400)throw new Error('BPMは20〜400で指定してください');
+  chart.timing={bpm,offsetMs:Number(chart.timing?.offsetMs)||0,timeSignature:[4,4]};
+  for(const n of chart.notes){
+    if(!n||typeof n.id!=='string'||!n.id||ids.has(n.id))throw new Error('ノーツIDは重複しない文字列にしてください');ids.add(n.id);
+    if(!types.has(n.type))throw new Error(`${n.id}: 未対応のノーツ種類です`);
+    for(const key of ['timeMs','lane','width'])if(!Number.isInteger(n[key]))throw new Error(`${n.id}: ${key} は整数で指定してください`);
+    if(n.timeMs<0||n.timeMs>40000||n.lane<0||n.width<1||n.lane+n.width>12)throw new Error(`${n.id}: 時刻またはレーン範囲が不正です`);
+    if(n.type==='hold'||n.type==='flick-hold'){if(!Number.isInteger(n.durationMs)||n.durationMs<100||n.timeMs+n.durationMs>40000)throw new Error(`${n.id}: ホールド時間が不正です`);}
+    else {delete n.durationMs;delete n.endFlick;delete n.nextId;}
+    if(n.type==='flick-hold'){
+      const f=n.endFlick;if(!f||!Number.isInteger(f.lane)||!Number.isInteger(f.width)||f.lane<0||f.width<1||f.lane+f.width>12)throw new Error(`${n.id}: 終点フリックの範囲が不正です`);
+    }else delete n.endFlick;
+  }
+  const incoming=new Set();
+  for(const n of chart.notes){if(!n.nextId)continue;const next=chart.notes.find(x=>x.id===n.nextId);if(!next||!n.durationMs||!next.durationMs)throw new Error(`${n.id}: 接続先はホールドにしてください`);if(incoming.has(next.id))throw new Error(`${next.id}: 複数のノーツからは接続できません`);incoming.add(next.id);const span=n.type==='flick-hold'?n.endFlick:n;if(next.timeMs!==n.timeMs+n.durationMs||next.lane<span.lane||next.lane+next.width>span.lane+span.width)throw new Error(`${n.id}: 接続先を終点時刻と範囲内に配置してください`);}
+  for(const start of chart.notes){const seen=new Set();let n=start;while(n?.nextId){if(seen.has(n.id))throw new Error('連結を循環させることはできません');seen.add(n.id);n=chart.notes.find(x=>x.id===n.nextId);}}
+  chart.notes.sort((a,b)=>a.timeMs-b.timeMs||a.lane-b.lane||a.id.localeCompare(b.id));return chart;
+}
+export function createChart(chartData=createDefaultChartData()) {
+  const chart=validateChartData(chartData);
+  return chart.notes.map((n,id)=>({time:n.timeMs/1000,lane:n.lane,width:n.width,duration:(n.durationMs||0)/1000,type:n.type,flickLane:n.endFlick?.lane??n.lane,flickWidth:n.endFlick?.width??n.width,nextId:n.nextId||null,sourceId:n.id,id,state:'pending',nextTick:0,holdHits:0,endFlick:null,endJudged:false}));
 }
 export class Game {
-  constructor(auto=false) { this.auto=auto; this.notes=createChart(); this.totalJudgements=this.notes.reduce((total,n)=>total+(n.duration?holdTickCount(n.duration):1),0);this.held=new Set();this.lastTime=0;this.combo=0;this.maxCombo=0;this.score=0;this.perfect=0;this.good=0;this.miss=0;this.earned=0;this.onJudge=()=>{}; }
+  constructor(auto=false,chartData=createDefaultChartData()) { this.auto=auto; this.notes=createChart(chartData); this.totalJudgements=this.notes.reduce((total,n)=>total+(n.duration?holdTickCount(n.duration):1),0);this.held=new Set();this.lastTime=0;this.combo=0;this.maxCombo=0;this.score=0;this.perfect=0;this.good=0;this.miss=0;this.earned=0;this.onJudge=()=>{}; }
   covers(n,lane,time=n.time) {
     return this.spanCovers(noteSpanAt(n,time),lane);
   }
