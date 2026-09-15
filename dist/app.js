@@ -1,4 +1,4 @@
-import { Game, FlickGesture, KEYS, LABELS, DURATION, HOLD_INTERVAL, holdBodyTickCount, noteSpanAt } from './engine.mjs';
+import { Game, FlickGesture, KEYS, LABELS, DURATION, HOLD_INTERVAL, holdBodyTickCount, noteSpanAt, flickSpan } from './engine.mjs';
 const $=id=>document.getElementById(id),canvas=$('game'),ctx=canvas.getContext('2d');
 let game,phase='ready',elapsed=0,epoch=0,audio,master,scheduledStep=0,frameTime=0,judgeUntil=0;
 const keys=new Set(),pointers=new Map(),effects=[],voices=new Set();
@@ -41,8 +41,8 @@ function draw(now){
     const y=hitY-(n.time-elapsed)*pps,rawTail=hitY-(n.time+n.duration-elapsed)*pps,tail=isFlickHold?Math.min(rawTail,hitY):rawTail;
     if(y<-20||tail>height)continue;
     const lowerTime=n.duration?Math.max(n.time,Math.min(elapsed,n.time+n.duration)):n.time;
-    const lowerSpan=noteSpanAt(n,lowerTime),endSpan=noteSpanAt(n,n.time+n.duration);
-    const x=lowerSpan.lane*laneW+3,w=lowerSpan.width*laneW-6,endX=endSpan.lane*laneW+3,endW=endSpan.width*laneW-6,head=n.duration?Math.min(y,hitY):y;
+    const lowerSpan=noteSpanAt(n,lowerTime),endSpan=noteSpanAt(n,n.time+n.duration),endFlickSpan=flickSpan(n);
+    const x=lowerSpan.lane*laneW+3,w=lowerSpan.width*laneW-6,endX=endSpan.lane*laneW+3,endW=endSpan.width*laneW-6,flickX=endFlickSpan.lane*laneW+3,flickW=endFlickSpan.width*laneW-6,head=n.duration?Math.min(y,hitY):y;
     if(n.duration){
       const tint=isFlickHold?'#b875ff':'#70dcf8',body=ctx.createLinearGradient(0,Math.min(tail,head-1),0,head);body.addColorStop(0,tint+'22');body.addColorStop(1,tint+(n.state==='holding'?'b0':'63'));ctx.fillStyle=body;
       ctx.beginPath();ctx.moveTo(x,head);ctx.lineTo(x+w,head);ctx.lineTo(endX+endW,tail);ctx.lineTo(endX,tail);ctx.closePath();ctx.fill();
@@ -54,7 +54,7 @@ function draw(now){
     ctx.shadowColor=color;ctx.shadowBlur=n.state==='holding'?20:10;ctx.fillStyle=color;ctx.fillRect(x,head-6,w,12);ctx.shadowBlur=0;ctx.fillStyle=purple?'#e5c9ff':n.duration?'#c5f4ff':'#ffb1bb';ctx.fillRect(x,head-6,w,2);
     if(n.type==='flick')drawFlickArrows(x,head,w);
     if(isFlickHold){
-      ctx.shadowColor='#b875ff';ctx.shadowBlur=12;ctx.fillStyle='#b875ff';ctx.fillRect(endX,tail-6,endW,12);ctx.shadowBlur=0;ctx.fillStyle='#e5c9ff';ctx.fillRect(endX,tail-6,endW,2);drawFlickArrows(endX,tail,endW);
+      ctx.shadowColor='#b875ff';ctx.shadowBlur=12;ctx.fillStyle='#b875ff';ctx.fillRect(flickX,tail-6,flickW,12);ctx.shadowBlur=0;ctx.fillStyle='#e5c9ff';ctx.fillRect(flickX,tail-6,flickW,2);drawFlickArrows(flickX,tail,flickW);
     }
   }
   ctx.fillStyle=topFade;ctx.fillRect(0,0,width,85);
