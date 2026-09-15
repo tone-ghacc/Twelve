@@ -4,30 +4,26 @@ const EPSILON = 1e-7;
 export const holdTickCount = duration => Math.ceil(duration / HOLD_INTERVAL - EPSILON) + 1;
 // A flick-hold replaces the ordinary end tick with a separate flick judgement.
 export const holdBodyTickCount = n => holdTickCount(n.duration) - (n.type==='flick-hold'?1:0);
-export function noteSpanAt(n,time) {
-  if(!n.duration)return {lane:n.lane,width:n.width};
-  const progress=Math.max(0,Math.min(1,(time-n.time)/n.duration));
-  return {
-    lane:n.lane+((n.endLane??n.lane)-n.lane)*progress,
-    width:n.width
-  };
-}
+// Hold bodies never move or change width. Their start span is their full span.
+export const noteSpanAt = n => ({lane:n.lane,width:n.width});
 export const flickSpan = n => n.type==='flick-hold'
-  ? {lane:n.flickLane??n.endLane??n.lane,width:n.flickWidth??n.width}
+  ? {lane:n.flickLane??n.lane,width:n.flickWidth??n.width}
   : {lane:n.lane,width:n.width};
 export const KEYS = ['KeyQ','KeyW','KeyE','KeyR','KeyT','KeyY','KeyU','KeyI','KeyO','KeyP','BracketLeft','BracketRight'];
 export const LABELS = ['Q','W','E','R','T','Y','U','I','O','P','[',']'];
 export function createChart() {
   const notes = [];
-  const add = (time,lane,width=1,duration=0,type=duration?'hold':'tap',endLane=lane,flickLane=endLane,flickWidth=width,chain=null) => notes.push({time,lane,width,duration,type,endLane,flickLane,flickWidth,chain});
+  const add = (time,lane,width=1,duration=0,type=duration?'hold':'tap',flickLane=lane,flickWidth=width,chain=null) => notes.push({time,lane,width,duration,type,flickLane,flickWidth,chain});
   add(2,0,2); add(2.5,3,2,0,'flick'); add(3,6,3); add(3.5,10,2);
   add(4,1,3,1.5); add(4.5,7,2); add(5,10,2);
-  add(6,6,3,1.5,'flick-hold',6,3,8,'wide-chain');
+  add(6,6,3,1.5,'flick-hold',3,8,'wide-chain');
   add(6.5,1,2); add(7,3,2);
-  add(7.5,7,2,.5,'flick-hold',5,5,4,'wide-chain');
+  add(7.5,7,2,.5,'flick-hold',5,4,'wide-chain');
   for(let block=0;block<7;block++) {
     const t=8+block*4, flip=block%2;
-    add(t,flip?8:0,3); add(t+.5,flip?5:3,2); add(t+1,flip?1:8,3,1.5,flip?'flick-hold':'hold');
+    add(t,flip?8:0,3); add(t+.5,flip?5:3,2);
+    if(flip){const chain=`wide-chain-${block}`;add(t+1,1,3,1.5,'flick-hold',0,6,chain);add(t+2.5,4,2,.4,block===3?'flick-hold':'hold',3,4,chain);}
+    else add(t+1,8,3,1.5,'hold');
     add(t+1.5,flip?8:1,2); add(t+2,flip?5:4,2); add(t+3,flip?7:0,4,0,'flick'); add(t+3.5,flip?1:7,3);
   }
   add(36,0,4,1.5); add(36,8,4,1.5,'flick-hold'); add(38,0,12,0,'flick');
