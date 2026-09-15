@@ -6,8 +6,8 @@ const isHold=n=>n.type==='hold'||n.type==='flick-hold';
 export function initEditor({getChart,setChart,onPreview}){
   const canvas=$('editor-canvas'),ctx=canvas.getContext('2d'),scroll=$('timeline-scroll');
   const form=$('note-form'),empty=$('inspector-empty'),json=$('chart-json'),status=$('editor-status');
-  let chart=structuredClone(getChart()),selectedId=null,tool='select',snap=250,width=0,ratio=1;
-  const height=1640,gutter=38,pxPerMs=.04;
+  let chart=structuredClone(getChart()),selectedId=null,tool='select',snap=250,zoom=1,width=0,ratio=1;
+  const gutter=38,basePxPerMs=.04,timelineHeight=()=>40+40000*basePxPerMs*zoom,pxPerMs=()=>basePxPerMs*zoom;
 
   function noteById(id){return chart.notes.find(n=>n.id===id);}
   function setStatus(message,kind=''){status.textContent=message;status.className=`editor-status ${kind}`;}
@@ -18,15 +18,15 @@ export function initEditor({getChart,setChart,onPreview}){
     catch(error){setStatus(error.message,'error');return false;}
   }
 
-  function laneMetrics(){const laneW=(width-gutter)/12;return {laneW,x:lane=>gutter+lane*laneW,y:ms=>20+ms*pxPerMs};}
+  function laneMetrics(){const laneW=(width-gutter)/12;return {laneW,x:lane=>gutter+lane*laneW,y:ms=>20+ms*pxPerMs()};}
   function draw(){
-    const {laneW,x,y}=laneMetrics();ctx.clearRect(0,0,width,height);ctx.fillStyle='#0b121b';ctx.fillRect(0,0,width,height);
+    const height=timelineHeight(),{laneW,x,y}=laneMetrics();ctx.clearRect(0,0,width,height);ctx.fillStyle='#0b121b';ctx.fillRect(0,0,width,height);
     for(let lane=0;lane<12;lane++){ctx.fillStyle=lane%2?'#101a26':'#0e1722';ctx.fillRect(x(lane),0,laneW,height);ctx.fillStyle='#263545';ctx.fillRect(x(lane),0,1,height);}
     ctx.textAlign='right';ctx.font='11px Barlow Condensed, sans-serif';
     for(let ms=0;ms<=40000;ms+=500){const py=y(ms),major=ms%2000===0;ctx.fillStyle=major?'#3a4859':'#202e3d';ctx.fillRect(gutter,py,width-gutter,major?1.5:1);if(major){ctx.fillStyle='#7f8da0';ctx.fillText(`${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')}`,gutter-6,py+4);}}
     for(const n of chart.notes){if(!n.nextId)continue;const next=noteById(n.nextId);if(!next)continue;const span=n.type==='flick-hold'?n.endFlick:n;ctx.strokeStyle='#b9f78d99';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x(span.lane+span.width/2),y(n.timeMs+n.durationMs));ctx.lineTo(x(next.lane+next.width/2),y(next.timeMs));ctx.stroke();}
     for(const n of chart.notes){
-      const nx=x(n.lane)+3,nw=n.width*laneW-6,ny=y(n.timeMs),duration=n.durationMs?Math.max(10,n.durationMs*pxPerMs):0,purple=n.type==='flick'||n.type==='flick-hold';
+      const nx=x(n.lane)+3,nw=n.width*laneW-6,ny=y(n.timeMs),duration=n.durationMs?Math.max(10,n.durationMs*pxPerMs()):0,purple=n.type==='flick'||n.type==='flick-hold';
       if(isHold(n)){ctx.fillStyle=purple?'#b875ff38':'#70dcf838';ctx.fillRect(nx,ny,nw,duration);ctx.strokeStyle=purple?'#b875ffaa':'#70dcf8aa';ctx.strokeRect(nx+.5,ny+.5,nw-1,duration-1);}
       ctx.fillStyle=purple?'#b875ff':isHold(n)?'#70dcf8':'#ff4e64';ctx.fillRect(nx,ny-5,nw,10);
       if(n.type==='flick'){ctx.fillStyle='#ead8ff';ctx.textAlign='center';ctx.font='bold 13px Barlow Condensed, sans-serif';ctx.fillText('‹‹  ››',nx+nw/2,ny-8);}
@@ -35,7 +35,7 @@ export function initEditor({getChart,setChart,onPreview}){
     }
   }
 
-  function resize(){width=Math.max(480,canvas.clientWidth);ratio=Math.min(devicePixelRatio||1,2);canvas.width=Math.round(width*ratio);canvas.height=Math.round(height*ratio);ctx.setTransform(ratio,0,0,ratio,0,0);draw();}
+  function resize(){const height=timelineHeight();width=Math.max(480,canvas.clientWidth);ratio=Math.min(devicePixelRatio||1,2);canvas.style.height=`${height}px`;canvas.width=Math.round(width*ratio);canvas.height=Math.round(height*ratio);ctx.setTransform(ratio,0,0,ratio,0,0);draw();}
   new ResizeObserver(resize).observe(canvas);
 
   function renderInspector(){
@@ -49,15 +49,16 @@ export function initEditor({getChart,setChart,onPreview}){
 
   function hitTest(px,py){const {laneW,x,y}=laneMetrics();return [...chart.notes].reverse().find(n=>{const nx=x(n.lane),nw=n.width*laneW,ny=y(n.timeMs),bottom=isHold(n)?y(n.timeMs+n.durationMs):ny;const body=px>=nx&&px<=nx+nw&&py>=ny-10&&py<=bottom+10;if(body)return true;if(n.type==='flick-hold'){const f=n.endFlick,fx=x(f.lane),fw=f.width*laneW;return px>=fx&&px<=fx+fw&&Math.abs(py-bottom)<=12;}return false;});}
   canvas.addEventListener('click',event=>{
-    const rect=canvas.getBoundingClientRect(),px=(event.clientX-rect.left)*width/rect.width,py=(event.clientY-rect.top)*height/rect.height,{laneW}=laneMetrics();
+    const height=timelineHeight(),rect=canvas.getBoundingClientRect(),px=(event.clientX-rect.left)*width/rect.width,py=(event.clientY-rect.top)*height/rect.height,{laneW}=laneMetrics();
     if(tool==='select'){select(hitTest(px,py)?.id||null);return;}
-    const lane=Math.max(0,Math.min(11,Math.floor((px-gutter)/laneW))),raw=Math.round(((py-20)/pxPerMs)/snap)*snap,timeMs=Math.max(0,Math.min(isHold({type:tool})?39000:40000,raw));
+    const lane=Math.max(0,Math.min(11,Math.floor((px-gutter)/laneW))),raw=Math.round(((py-20)/pxPerMs())/snap)*snap,timeMs=Math.max(0,Math.min(isHold({type:tool})?39000:40000,raw));
     const note={id:nextId(),type:tool,timeMs,lane,width:1};if(isHold(note))note.durationMs=1000;if(tool==='flick-hold')note.endFlick={lane,width:1};
     const next=structuredClone(chart);next.notes.push(note);if(save(next,`${TYPES[tool]}を配置しました`))select(note.id);
   });
 
   for(const button of document.querySelectorAll('.tool'))button.addEventListener('click',()=>{tool=button.dataset.tool;document.querySelectorAll('.tool').forEach(x=>x.classList.toggle('active',x===button));setStatus(tool==='select'?'選択ツール':'レーンをクリックして配置');});
   $('editor-snap').addEventListener('change',event=>{snap=Number(event.target.value);});
+  $('editor-zoom').addEventListener('change',event=>{const centerMs=Math.max(0,(scroll.scrollTop+scroll.clientHeight/2-20)/pxPerMs()),nextZoom=Number(event.target.value);zoom=nextZoom;resize();requestAnimationFrame(()=>{scroll.scrollTop=Math.max(0,20+centerMs*pxPerMs()-scroll.clientHeight/2);});setStatus(`時間ズーム ${Math.round(zoom*100)}%`,'ok');});
 
   function commitInspector(){
     const current=noteById(selectedId);if(!current)return;const next=structuredClone(chart),n=next.notes.find(x=>x.id===selectedId),oldType=n.type;
