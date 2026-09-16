@@ -85,6 +85,10 @@ window.addEventListener('keyup',e=>{const lane=KEYS.indexOf(e.code);if(lane>=0){
 const pointerLane=e=>Math.max(0,Math.min(11,Math.floor((e.clientX-canvas.getBoundingClientRect().left)/width*12)));
 const flickLane=x=>x<0||x>=width?-1:Math.floor(x/width*12);
 canvas.addEventListener('pointerdown',e=>{if(phase!=='playing'||(e.pointerType==='mouse'&&e.button!==0))return;e.preventDefault();canvas.setPointerCapture(e.pointerId);const lane=pointerLane(e),x=e.clientX-canvas.getBoundingClientRect().left;pointers.set(e.pointerId,{lane,gesture:new FlickGesture(x,e.clientY,e.timeStamp)});press(lane);});
+const playWorkspace=$('play-workspace'),stage=$('stage'),preventBrowserGesture=event=>event.preventDefault();
+for(const type of ['selectstart','contextmenu','dragstart'])stage.addEventListener(type,preventBrowserGesture);
+for(const type of ['gesturestart','gesturechange','gestureend'])playWorkspace.addEventListener(type,preventBrowserGesture,{passive:false});
+playWorkspace.addEventListener('touchmove',event=>{if(event.touches.length>1)event.preventDefault();},{passive:false});
 function movePointer(e){
   const p=pointers.get(e.pointerId);if(!p||phase!=='playing')return;
   const lane=pointerLane(e),x=e.clientX-canvas.getBoundingClientRect().left;
