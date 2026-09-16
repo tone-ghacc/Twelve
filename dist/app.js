@@ -1,6 +1,6 @@
 import { Game, FlickGesture, KEYS, LABELS, DURATION, HOLD_INTERVAL, holdBodyTickCount, noteSpanAt, flickSpan, createDefaultChartData, validateChartData } from './engine.mjs';
 import {initEditor} from './editor.js';
-import {createPerspective} from './projection.mjs';
+import {createPerspective,perspectiveMetrics} from './projection.mjs';
 const $=id=>document.getElementById(id),canvas=$('game'),ctx=canvas.getContext('2d');
 let game,phase='ready',elapsed=0,epoch=0,audio,master,scheduledStep=0,frameTime=0,judgeUntil=0;
 let chartData=createDefaultChartData();try{const saved=localStorage.getItem('twelve-chart-v1');if(saved)chartData=validateChartData(JSON.parse(saved));}catch{localStorage.removeItem('twelve-chart-v1');}
@@ -23,11 +23,10 @@ function showOverlay(label,title,description,button){$('overlay').style.display=
 function reset(){silence();elapsed=0;keys.clear();pointers.clear();effects.length=0;newGame();setPhase('ready');$('score').textContent='0000000';$('combo-box').style.display='none';$('judgement').textContent='';showOverlay('12 LANES. YOUR RHYTHM.','リズムを、つかもう。','赤はタップ。水色は長押し。紫はフリック。','▶ プレイする');}
 function end(){elapsed=DURATION;setPhase('ended');keys.clear();pointers.clear();showOverlay(game.auto?'AUTO PLAY COMPLETE':'PLAY COMPLETE',game.auto?'譜面再生が完了しました':'おつかれさま！',`PERFECT ${game.perfect} · GOOD ${game.good} · MISS ${game.miss} / MAX COMBO ${game.maxCombo}`,'↺ もう一度プレイ');}
 function drawFlickArrows(x,y,w,scale=1){
-  const half=w/2,count=Math.max(1,Math.floor(half/Math.max(7,13*scale))),spacing=half/count,chevronW=Math.min(6*scale,spacing*.48),center=x+half,cy=y-(7+9*scale);
-  ctx.strokeStyle='#d8b1ff';ctx.lineWidth=Math.max(1,2*scale);ctx.lineJoin='round';ctx.lineCap='round';ctx.beginPath();
+  const metrics=perspectiveMetrics(scale),half=w/2,count=Math.max(1,Math.floor(half/Math.max(3,13*scale))),spacing=half/count,chevronW=Math.min(6*scale,spacing*.48),center=x+half,cy=y-metrics.arrowOffset;
+  ctx.strokeStyle='#d8b1ff';ctx.lineWidth=metrics.outlineWidth;ctx.lineJoin='round';ctx.lineCap='round';ctx.beginPath();
   for(const direction of [-1,1])for(let i=0;i<count;i++){
-    const tip=center+direction*(spacing*(i+.78)),arrowH=Math.max(2.5,4*scale);
-    ctx.moveTo(tip-direction*chevronW,cy-arrowH);ctx.lineTo(tip,cy);ctx.lineTo(tip-direction*chevronW,cy+arrowH);
+    const tip=center+direction*(spacing*(i+.78));ctx.moveTo(tip-direction*chevronW,cy-metrics.arrowHeight);ctx.lineTo(tip,cy);ctx.lineTo(tip-direction*chevronW,cy+metrics.arrowHeight);
   }
   ctx.stroke();ctx.lineCap='butt';
 }
@@ -39,7 +38,7 @@ function draw(now){
     const topLeft=view.laneX(l,0),topRight=view.laneX(l+1,0),bottomLeft=view.laneX(l,1),bottomRight=view.laneX(l+1,1);ctx.fillStyle=active.has(l)?'#243b39':l%2===0?'#121b28':'#101823';ctx.beginPath();ctx.moveTo(topLeft,topY);ctx.lineTo(topRight,topY);ctx.lineTo(bottomRight,hitY);ctx.lineTo(bottomLeft,hitY);ctx.closePath();ctx.fill();ctx.fillStyle=active.has(l)?'#1d302f':l%2===0?'#101925':'#0e1620';ctx.fillRect(l*laneW,hitY,laneW,height-hitY);
   }
   for(let l=0;l<=12;l++){ctx.strokeStyle=l%3===0?'#39495d':'#263546';ctx.lineWidth=l%3===0?1.2:1;ctx.beginPath();ctx.moveTo(view.laneX(l,0),topY);ctx.lineTo(view.laneX(l,1),hitY);ctx.stroke();}
-  for(let beat=Math.floor(elapsed/.5);beat<elapsed/.5+travel*2+2;beat++){const point=view.project(beat*.5,elapsed);if(point.y<topY||point.y>hitY)continue;const left=view.laneX(0,point.p),right=view.laneX(12,point.p);ctx.fillStyle=beat%4===0?'#3b4d62':'#223244';ctx.fillRect(left,point.y,right-left,beat%4===0?1.5:1);}
+  for(let beat=Math.floor(elapsed/.5);beat<elapsed/.5+travel*2+2;beat++){const point=view.project(beat*.5,elapsed);if(point.y<topY||point.y>hitY)continue;const left=view.laneX(0,point.p),right=view.laneX(12,point.p),lineScale=Math.max(.4,point.scale);ctx.fillStyle=beat%4===0?'#3b4d62':'#223244';ctx.fillRect(left,point.y,right-left,(beat%4===0?1.5:1)*lineScale);}
   ctx.strokeStyle='#506278';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(view.laneX(0,0),topY);ctx.lineTo(view.laneX(12,0),topY);ctx.stroke();
   const topFade=ctx.createLinearGradient(0,0,0,topY+58);topFade.addColorStop(0,'#090f18');topFade.addColorStop(1,'#090f1800');
   ctx.save();ctx.beginPath();ctx.moveTo(view.laneX(0,0),topY);ctx.lineTo(view.laneX(12,0),topY);ctx.lineTo(width,hitY);ctx.lineTo(width,height);ctx.lineTo(0,height);ctx.lineTo(0,hitY);ctx.closePath();ctx.clip();
@@ -50,19 +49,19 @@ function draw(now){
     if(y<topY-28||tail>height+30)continue;
     const lowerTime=n.duration?Math.max(n.time,Math.min(elapsed,n.time+n.duration)):n.time;
     const lowerSpan=noteSpanAt(n,lowerTime),endSpan=noteSpanAt(n,n.time+n.duration),endFlickSpan=flickSpan(n);
-    const headProjection=view.span(lowerSpan,lowerTime,elapsed,3),endProjection=view.span(endSpan,n.time+n.duration,elapsed,3),flickProjection=view.span(endFlickSpan,n.time+n.duration,elapsed,3),x=headProjection.x,w=headProjection.w,endX=endProjection.x,endW=endProjection.w,flickX=flickProjection.x,flickW=flickProjection.w,head=n.duration?Math.min(headProjection.y,hitY):y,headScale=Math.max(.35,Math.min(1,headProjection.scale)),endScale=Math.max(.35,Math.min(1,endProjection.scale));
+    const headProjection=view.span(lowerSpan,lowerTime,elapsed,3),endProjection=view.span(endSpan,n.time+n.duration,elapsed,3),flickProjection=view.span(endFlickSpan,n.time+n.duration,elapsed,3),x=headProjection.x,w=headProjection.w,endX=endProjection.x,endW=endProjection.w,flickX=flickProjection.x,flickW=flickProjection.w,head=n.duration?Math.min(headProjection.y,hitY):y,headScale=headProjection.scale,endScale=endProjection.scale,headMetrics=perspectiveMetrics(headScale),endMetrics=perspectiveMetrics(endScale);
     if(n.duration){
       const tint=isFlickHold?'#b875ff':'#70dcf8',body=ctx.createLinearGradient(0,Math.min(tail,head-1),0,head);body.addColorStop(0,tint+'22');body.addColorStop(1,tint+(n.state==='holding'?'b0':'63'));ctx.fillStyle=body;
       ctx.beginPath();ctx.moveTo(x,head);ctx.lineTo(x+w,head);ctx.lineTo(endX+endW,tail);ctx.lineTo(endX,tail);ctx.closePath();ctx.fill();
-      ctx.strokeStyle=tint+'7a';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x,head);ctx.lineTo(endX,tail);ctx.moveTo(x+w,head);ctx.lineTo(endX+endW,tail);ctx.stroke();
-      ctx.fillStyle=isFlickHold?'#e5c9ff':'#a0ebff';ctx.fillRect(endX,tail,endW,Math.max(1.5,3*endScale));
+      ctx.strokeStyle=tint+'7a';ctx.lineWidth=(headMetrics.outlineWidth+endMetrics.outlineWidth)/2;ctx.beginPath();ctx.moveTo(x,head);ctx.lineTo(endX,tail);ctx.moveTo(x+w,head);ctx.lineTo(endX+endW,tail);ctx.stroke();
+      ctx.fillStyle=isFlickHold?'#e5c9ff':'#a0ebff';ctx.fillRect(endX,tail,endW,endMetrics.accentHeight*1.5);
     }
-    if(n.duration){ctx.fillStyle=isFlickHold?(n.state==='holding'?'#e5c9ff80':'#b875ff40'):(n.state==='holding'?'#bcefff80':'#70dcf840');for(let tick=n.nextTick;tick<holdBodyTickCount(n);tick++){const tickTime=n.time+Math.min((tick+1)*HOLD_INTERVAL,n.duration),tickProjection=view.span(noteSpanAt(n,tickTime),tickTime,elapsed,6),tickY=tickProjection.y;if(tickY>=topY&&tickY<head-5)ctx.fillRect(tickProjection.x,tickY,tickProjection.w,Math.max(1,tickProjection.scale));}}
+    if(n.duration){ctx.fillStyle=isFlickHold?(n.state==='holding'?'#e5c9ff80':'#b875ff40'):(n.state==='holding'?'#bcefff80':'#70dcf840');for(let tick=n.nextTick;tick<holdBodyTickCount(n);tick++){const tickTime=n.time+Math.min((tick+1)*HOLD_INTERVAL,n.duration),tickProjection=view.span(noteSpanAt(n,tickTime),tickTime,elapsed,6),tickY=tickProjection.y,tickMetrics=perspectiveMetrics(tickProjection.scale);if(tickY>=topY&&tickY<head-headMetrics.noteHeight/2)ctx.fillRect(tickProjection.x,tickY,tickProjection.w,tickMetrics.tickHeight);}}
     const color=purple?'#b875ff':n.duration?'#70dcf8':'#ff4e64';
-    const headHeight=4+8*headScale;ctx.shadowColor=color;ctx.shadowBlur=(n.state==='holding'?20:10)*headScale;ctx.fillStyle=color;ctx.fillRect(x,head-headHeight/2,w,headHeight);ctx.shadowBlur=0;ctx.fillStyle=purple?'#e5c9ff':n.duration?'#c5f4ff':'#ffb1bb';ctx.fillRect(x,head-headHeight/2,w,Math.max(1,2*headScale));
+    const headHeight=headMetrics.noteHeight;ctx.shadowColor=color;ctx.shadowBlur=headMetrics.shadowBlur*(n.state==='holding'?1.65:.85);ctx.fillStyle=color;ctx.fillRect(x,head-headHeight/2,w,headHeight);ctx.shadowBlur=0;ctx.fillStyle=purple?'#e5c9ff':n.duration?'#c5f4ff':'#ffb1bb';ctx.fillRect(x,head-headHeight/2,w,headMetrics.accentHeight);
     if(n.type==='flick')drawFlickArrows(x,head,w,headScale);
     if(isFlickHold){
-      const flickHeight=4+8*endScale;ctx.shadowColor='#b875ff';ctx.shadowBlur=12*endScale;ctx.fillStyle='#b875ff';ctx.fillRect(flickX,tail-flickHeight/2,flickW,flickHeight);ctx.shadowBlur=0;ctx.fillStyle='#e5c9ff';ctx.fillRect(flickX,tail-flickHeight/2,flickW,Math.max(1,2*endScale));drawFlickArrows(flickX,tail,flickW,endScale);
+      const flickHeight=endMetrics.noteHeight;ctx.shadowColor='#b875ff';ctx.shadowBlur=endMetrics.shadowBlur;ctx.fillStyle='#b875ff';ctx.fillRect(flickX,tail-flickHeight/2,flickW,flickHeight);ctx.shadowBlur=0;ctx.fillStyle='#e5c9ff';ctx.fillRect(flickX,tail-flickHeight/2,flickW,endMetrics.accentHeight);drawFlickArrows(flickX,tail,flickW,endScale);
     }
   }
   ctx.restore();
