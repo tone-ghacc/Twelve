@@ -42,6 +42,7 @@ function draw(now){
   for(let beat=Math.floor(elapsed/.5);beat<elapsed/.5+travel*2+2;beat++){const point=view.project(beat*.5,elapsed);if(point.y<topY||point.y>hitY)continue;const left=view.laneX(0,point.p),right=view.laneX(12,point.p);ctx.fillStyle=beat%4===0?'#3b4d62':'#223244';ctx.fillRect(left,point.y,right-left,beat%4===0?1.5:1);}
   ctx.strokeStyle='#506278';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(view.laneX(0,0),topY);ctx.lineTo(view.laneX(12,0),topY);ctx.stroke();
   const topFade=ctx.createLinearGradient(0,0,0,topY+58);topFade.addColorStop(0,'#090f18');topFade.addColorStop(1,'#090f1800');
+  ctx.save();ctx.beginPath();ctx.moveTo(view.laneX(0,0),topY);ctx.lineTo(view.laneX(12,0),topY);ctx.lineTo(width,hitY);ctx.lineTo(width,height);ctx.lineTo(0,height);ctx.lineTo(0,hitY);ctx.closePath();ctx.clip();
   for(const n of game.notes){
     if(n.state==='hit'||n.state==='miss')continue;
     const isFlickHold=n.type==='flick-hold',purple=n.type==='flick'||isFlickHold;
@@ -64,6 +65,7 @@ function draw(now){
       const flickHeight=4+8*endScale;ctx.shadowColor='#b875ff';ctx.shadowBlur=12*endScale;ctx.fillStyle='#b875ff';ctx.fillRect(flickX,tail-flickHeight/2,flickW,flickHeight);ctx.shadowBlur=0;ctx.fillStyle='#e5c9ff';ctx.fillRect(flickX,tail-flickHeight/2,flickW,Math.max(1,2*endScale));drawFlickArrows(flickX,tail,flickW,endScale);
     }
   }
+  ctx.restore();
   ctx.fillStyle=topFade;ctx.fillRect(0,0,width,topY+58);
   const glow=ctx.createLinearGradient(0,hitY-25,0,hitY+15);glow.addColorStop(0,'#b9f78d00');glow.addColorStop(.65,'#b9f78d20');glow.addColorStop(1,'#b9f78d00');ctx.fillStyle=glow;ctx.fillRect(0,hitY-25,width,40);ctx.fillStyle='#b9f78d';ctx.fillRect(0,hitY,width,2);
   for(let i=effects.length-1;i>=0;i--){const e=effects[i],age=(now-e.start)/450;if(age>=1){effects.splice(i,1);continue;}ctx.globalAlpha=(1-age)*.8;ctx.strokeStyle=e.flick?'#c68aff':e.hold?'#70dcf8':'#ff8291';ctx.lineWidth=2;ctx.strokeRect(e.lane*laneW+3-age*5,hitY-7-age*23,e.width*laneW-6+age*10,14+age*46);ctx.globalAlpha=1;}
