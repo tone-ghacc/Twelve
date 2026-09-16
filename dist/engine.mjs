@@ -1,4 +1,3 @@
-export const DURATION = 40;
 export const HOLD_INTERVAL = 0.1;
 const EPSILON = 1e-7;
 // The start only samples whether the lane is already held; it is not a judgement.
@@ -41,15 +40,18 @@ export function createDefaultChartData() {
 export function validateChartData(input) {
   if(!input||input.schemaVersion!==1||!Array.isArray(input.notes))throw new Error('schemaVersion 1 の譜面JSONを指定してください');
   const chart=structuredClone(input),ids=new Set(),types=new Set(['tap','flick','hold','flick-hold']);
-  chart.metadata={title:String(chart.metadata?.title||'Untitled'),artist:String(chart.metadata?.artist||''),difficulty:String(chart.metadata?.difficulty||'EDIT'),laneCount:12,durationMs:40000};
+  const durationMs=Number(chart.metadata?.durationMs??40000);if(!Number.isInteger(durationMs)||durationMs<1000||durationMs>86400000)throw new Error('譜面の長さは1秒〜24時間の整数msで指定してください');
+  chart.metadata={title:String(chart.metadata?.title||'Untitled'),artist:String(chart.metadata?.artist||''),difficulty:String(chart.metadata?.difficulty||'EDIT'),laneCount:12,durationMs};
   const bpm=Number(chart.timing?.bpm)||120;if(bpm<20||bpm>400)throw new Error('BPMは20〜400で指定してください');
-  chart.timing={bpm,offsetMs:Number(chart.timing?.offsetMs)||0,timeSignature:[4,4]};
+  const offsetMs=Number(chart.timing?.offsetMs??0);if(!Number.isInteger(offsetMs)||Math.abs(offsetMs)>86400000)throw new Error('オフセットは±24時間以内の整数msで指定してください');
+  const timeSignature=chart.timing?.timeSignature??[4,4];if(!Array.isArray(timeSignature)||timeSignature.length!==2||timeSignature.some(value=>!Number.isInteger(value)||value<1||value>32))throw new Error('拍子は1〜32の整数2つで指定してください');
+  chart.timing={bpm,offsetMs,timeSignature:[...timeSignature]};
   for(const n of chart.notes){
     if(!n||typeof n.id!=='string'||!n.id||ids.has(n.id))throw new Error('ノーツIDは重複しない文字列にしてください');ids.add(n.id);
     if(!types.has(n.type))throw new Error(`${n.id}: 未対応のノーツ種類です`);
     for(const key of ['timeMs','lane','width'])if(!Number.isInteger(n[key]))throw new Error(`${n.id}: ${key} は整数で指定してください`);
-    if(n.timeMs<0||n.timeMs>40000||n.lane<0||n.width<1||n.lane+n.width>12)throw new Error(`${n.id}: 時刻またはレーン範囲が不正です`);
-    if(n.type==='hold'||n.type==='flick-hold'){if(!Number.isInteger(n.durationMs)||n.durationMs<100||n.timeMs+n.durationMs>40000)throw new Error(`${n.id}: ホールド時間が不正です`);}
+    if(n.timeMs<0||n.timeMs>durationMs||n.lane<0||n.width<1||n.lane+n.width>12)throw new Error(`${n.id}: 時刻またはレーン範囲が不正です`);
+    if(n.type==='hold'||n.type==='flick-hold'){if(!Number.isInteger(n.durationMs)||n.durationMs<100||n.timeMs+n.durationMs>durationMs)throw new Error(`${n.id}: ホールド時間が不正です`);}
     else {delete n.durationMs;delete n.endFlick;delete n.nextId;}
     if(n.type==='flick-hold'){
       const f=n.endFlick;if(!f||!Number.isInteger(f.lane)||!Number.isInteger(f.width)||f.lane<0||f.width<1||f.lane+f.width>12)throw new Error(`${n.id}: 終点フリックの範囲が不正です`);
