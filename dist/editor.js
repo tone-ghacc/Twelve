@@ -2,10 +2,11 @@ import {createDefaultChartData,validateChartData} from './engine.mjs';
 
 const $=id=>document.getElementById(id),TYPES={tap:'タップ',flick:'フリック',hold:'ホールド','flick-hold':'フリックホールド'};
 const isHold=n=>n.type==='hold'||n.type==='flick-hold';
+export const EDITOR_BASE_PX_PER_MS=.16;
 export function measureDurationMs(timing){const [beats=4,beatUnit=4]=timing?.timeSignature||[];return 60000/(Number(timing?.bpm)||120)*beats*4/beatUnit;}
+export function timelineGridTiming(timing,division){if(!Number.isInteger(division)||division<1)throw new Error('スナップは1以上の整数で指定してください');const measureMs=measureDurationMs(timing);return{measureMs,subdivisionMs:measureMs/division};}
 export function snapToMeasureDivision(value,timing,division,min=0,max=Number.POSITIVE_INFINITY){
-  if(!Number.isInteger(division)||division<1)throw new Error('スナップは1以上の整数で指定してください');
-  const unit=measureDurationMs(timing)/division,minIndex=Math.ceil(min/unit-1e-9),maxIndex=Math.floor(max/unit+1e-9);if(maxIndex<minIndex)return Math.round(Math.max(min,Math.min(max,value)));const index=Math.max(minIndex,Math.min(maxIndex,Math.round(value/unit)));
+  const unit=timelineGridTiming(timing,division).subdivisionMs,minIndex=Math.ceil(min/unit-1e-9),maxIndex=Math.floor(max/unit+1e-9);if(maxIndex<minIndex)return Math.round(Math.max(min,Math.min(max,value)));const index=Math.max(minIndex,Math.min(maxIndex,Math.round(value/unit)));
   return Math.round(index*unit);
 }
 export function laneSpanFromDrag(startLane,endLane){const a=Math.max(0,Math.min(11,Math.trunc(startLane))),b=Math.max(0,Math.min(11,Math.trunc(endLane)));return{lane:Math.min(a,b),width:Math.abs(a-b)+1};}
@@ -14,7 +15,7 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
   const canvas=$('editor-canvas'),ctx=canvas.getContext('2d'),scroll=$('timeline-scroll');
   const form=$('note-form'),empty=$('inspector-empty'),json=$('chart-json'),status=$('editor-status');
   let chart=structuredClone(getChart()),selectedId=null,tool='select',snapDivision=16,zoom=1,width=0,ratio=1,initialScrollPending=true,drag=null,placing=null;
-  const gutter=38,basePxPerMs=.04,durationMs=()=>chart.metadata.durationMs,timelineHeight=()=>Math.max(840,Math.min(16000,40+durationMs()*basePxPerMs*zoom)),pxPerMs=()=>(timelineHeight()-40)/durationMs();
+  const gutter=38,durationMs=()=>chart.metadata.durationMs,timelineHeight=()=>Math.max(840,Math.min(16000,40+durationMs()*EDITOR_BASE_PX_PER_MS*zoom)),pxPerMs=()=>(timelineHeight()-40)/durationMs();
 
   function noteById(id){return chart.notes.find(n=>n.id===id);}
   function setStatus(message,kind=''){status.textContent=message;status.className=`editor-status ${kind}`;}
@@ -42,7 +43,9 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
     const height=timelineHeight(),{laneW,x,y}=laneMetrics();ctx.clearRect(0,0,width,height);ctx.fillStyle='#0b121b';ctx.fillRect(0,0,width,height);
     for(let lane=0;lane<12;lane++){ctx.fillStyle=lane%2?'#101a26':'#0e1722';ctx.fillRect(x(lane),0,laneW,height);ctx.fillStyle='#263545';ctx.fillRect(x(lane),0,1,height);}
     ctx.textAlign='right';ctx.font='11px Barlow Condensed, sans-serif';
-    const gridStep=[500,1000,2000,5000,10000,30000,60000,300000,600000].find(step=>step*pxPerMs()>=8)||600000,majorStep=gridStep*4;for(let ms=0;ms<=durationMs();ms+=gridStep){const py=y(ms),major=ms%majorStep===0;ctx.fillStyle=major?'#3a4859':'#202e3d';ctx.fillRect(gutter,py,width-gutter,major?1.5:1);if(major){ctx.fillStyle='#7f8da0';ctx.fillText(`${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')}`,gutter-6,py+4);}}
+    const {measureMs,subdivisionMs}=timelineGridTiming(chart.timing,snapDivision),measureCount=Math.ceil(durationMs()/measureMs),subdivisionPx=subdivisionMs*pxPerMs(),minorStep=Math.max(1,Math.ceil(1.5/subdivisionPx),Math.ceil(measureCount*snapDivision/6000));
+    if(minorStep<snapDivision)for(let measure=0;measure<=measureCount;measure++)for(let subdivision=minorStep;subdivision<snapDivision;subdivision+=minorStep){const ms=measure*measureMs+subdivision*subdivisionMs;if(ms>durationMs()+1e-7)break;ctx.fillStyle='#202e3d';ctx.fillRect(gutter,y(ms),width-gutter,1);}
+    const measurePx=measureMs*pxPerMs(),majorStep=Math.max(1,Math.ceil(1.5/measurePx),Math.ceil(measureCount/4000)),labelStep=majorStep*Math.max(1,Math.ceil(30/(measurePx*majorStep)));for(let measure=0;measure<=measureCount;measure+=majorStep){const ms=measure*measureMs;if(ms>durationMs()+1e-7)break;ctx.fillStyle='#3a4859';ctx.fillRect(gutter,y(ms),width-gutter,1.5);if(measure%labelStep===0){const seconds=ms/1000,minutes=Math.floor(seconds/60),within=seconds-minutes*60,label=Number.isInteger(within)?String(within).padStart(2,'0'):within.toFixed(1).padStart(4,'0');ctx.fillStyle='#7f8da0';ctx.fillText(`${minutes}:${label}`,gutter-6,y(ms)+4);}}
     for(const n of chart.notes){if(!n.nextId)continue;const next=noteById(n.nextId);if(!next)continue;const span=n.type==='flick-hold'?n.endFlick:n;ctx.strokeStyle='#b9f78d99';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x(span.lane+span.width/2),y(n.timeMs+n.durationMs));ctx.lineTo(x(next.lane+next.width/2),y(next.timeMs));ctx.stroke();}
     for(const n of chart.notes){
       const nx=x(n.lane)+3,nw=n.width*laneW-6,ny=y(n.timeMs),duration=n.durationMs?Math.max(10,n.durationMs*pxPerMs()):0,endY=isHold(n)?y(n.timeMs+n.durationMs):ny,purple=n.type==='flick'||n.type==='flick-hold';
@@ -119,7 +122,7 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
   for(const option of snapOptions.querySelectorAll('[data-snap]'))option.addEventListener('click',()=>{snapInput.value=option.dataset.snap;snapInput.dispatchEvent(new Event('input',{bubbles:true}));snapInput.focus();});
   document.addEventListener('pointerdown',event=>{if(!event.target.closest('.snap-field'))hideSnapOptions();});
   snapInput.addEventListener('keydown',event=>{if(['-','+','.','e','E'].includes(event.key))event.preventDefault();});
-  snapInput.addEventListener('input',()=>{const valid=/^[1-9]\d*$/.test(snapInput.value);snapInput.setCustomValidity(valid?'':snapError);if(valid){snapDivision=Number(snapInput.value);setStatus(`スナップ: 1小節の${snapDivision}分の1`,'ok');}});
+  snapInput.addEventListener('input',()=>{const valid=/^[1-9]\d*$/.test(snapInput.value);snapInput.setCustomValidity(valid?'':snapError);if(valid){snapDivision=Number(snapInput.value);draw();setStatus(`スナップ: 1小節の${snapDivision}分の1`,'ok');}});
   snapInput.addEventListener('change',()=>{if(snapInput.checkValidity())return;snapInput.value=String(snapDivision);snapInput.setCustomValidity('');setStatus(`スナップは${snapError}`,'error');});
   $('editor-zoom').addEventListener('change',event=>{const centerY=scroll.scrollTop+scroll.clientHeight/2,centerMs=Math.max(0,Math.min(durationMs(),(timelineHeight()-20-centerY)/pxPerMs())),nextZoom=Number(event.target.value);zoom=nextZoom;resize();requestAnimationFrame(()=>{const newCenterY=timelineHeight()-20-centerMs*pxPerMs();scroll.scrollTop=Math.max(0,newCenterY-scroll.clientHeight/2);});setStatus(`時間ズーム ${Math.round(zoom*100)}%`,'ok');});
 
