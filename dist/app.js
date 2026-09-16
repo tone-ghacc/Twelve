@@ -1,4 +1,4 @@
-import { Game, FlickGesture, KEYS, LABELS, HOLD_INTERVAL, holdBodyTickCount, noteSpanAt, flickSpan, createDefaultChartData, validateChartData } from './engine.mjs';
+import { Game, FlickGesture, KEYS, LABELS, noteSpanAt, flickSpan, createDefaultChartData, validateChartData } from './engine.mjs';
 import {initEditor} from './editor.js';
 import {createPerspective,perspectiveMetrics} from './projection.mjs';
 const $=id=>document.getElementById(id),canvas=$('game'),ctx=canvas.getContext('2d');
@@ -60,7 +60,6 @@ function draw(now){
       ctx.strokeStyle=tint+'7a';ctx.lineWidth=(headMetrics.outlineWidth+endMetrics.outlineWidth)/2;ctx.beginPath();ctx.moveTo(x,head);ctx.lineTo(endX,tail);ctx.moveTo(x+w,head);ctx.lineTo(endX+endW,tail);ctx.stroke();
       ctx.fillStyle=isFlickHold?'#e5c9ff':'#a0ebff';ctx.fillRect(endX,tail,endW,endMetrics.accentHeight*1.5);
     }
-    if(n.duration){ctx.fillStyle=isFlickHold?(n.state==='holding'?'#e5c9ff80':'#b875ff40'):(n.state==='holding'?'#bcefff80':'#70dcf840');for(let tick=n.nextTick;tick<holdBodyTickCount(n);tick++){const tickTime=n.time+Math.min((tick+1)*HOLD_INTERVAL,n.duration),tickProjection=view.span(noteSpanAt(n,tickTime),tickTime,elapsed,6),tickY=tickProjection.y,tickMetrics=perspectiveMetrics(tickProjection.scale);if(tickY>=topY&&tickY<head-headMetrics.noteHeight/2)ctx.fillRect(tickProjection.x,tickY,tickProjection.w,tickMetrics.tickHeight);}}
     const color=purple?'#b875ff':n.duration?'#70dcf8':'#ff4e64';
     const headHeight=headMetrics.noteHeight;ctx.shadowColor=color;ctx.shadowBlur=headMetrics.shadowBlur*(n.state==='holding'?1.65:.85);ctx.fillStyle=color;ctx.fillRect(x,head-headHeight/2,w,headHeight);ctx.shadowBlur=0;ctx.fillStyle=purple?'#e5c9ff':n.duration?'#c5f4ff':'#ffb1bb';ctx.fillRect(x,head-headHeight/2,w,headMetrics.accentHeight);
     if(n.type==='flick')drawFlickArrows(x,head,w,headScale);
