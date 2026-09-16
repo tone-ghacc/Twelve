@@ -3,6 +3,7 @@ import {createDefaultChartData,validateChartData} from './engine.mjs';
 const $=id=>document.getElementById(id),TYPES={tap:'タップ',flick:'フリック',hold:'ホールド','flick-hold':'フリックホールド'};
 const isHold=n=>n.type==='hold'||n.type==='flick-hold';
 export const EDITOR_BASE_PX_PER_MS=.16;
+export function editorTimelineHeight(durationMs,zoom){return Math.max(840,40+durationMs*EDITOR_BASE_PX_PER_MS*zoom);}
 export function measureDurationMs(timing){const [beats=4,beatUnit=4]=timing?.timeSignature||[];return 60000/(Number(timing?.bpm)||120)*beats*4/beatUnit;}
 export function timelineGridTiming(timing,division){if(!Number.isInteger(division)||division<1)throw new Error('スナップは1以上の整数で指定してください');const measureMs=measureDurationMs(timing);return{measureMs,subdivisionMs:measureMs/division};}
 export function snapToMeasureDivision(value,timing,division,min=0,max=Number.POSITIVE_INFINITY){
@@ -17,7 +18,7 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
   const form=$('note-form'),empty=$('inspector-empty'),json=$('chart-json'),status=$('editor-status');
   const viewport=$('timeline-viewport'),playToggle=$('editor-play-toggle'),playStop=$('editor-play-stop'),playTime=$('editor-play-time');
   let chart=structuredClone(getChart()),selectedId=null,tool='select',snapDivision=16,zoom=1,width=0,ratio=1,initialScrollPending=true,drag=null,placing=null,audition={state:'stopped',timeMs:0,originTimeMs:0,startedAt:0,nextEvent:0,events:[],frame:0};
-  const gutter=38,durationMs=()=>chart.metadata.durationMs,timelineHeight=()=>Math.max(840,Math.min(16000,40+durationMs()*EDITOR_BASE_PX_PER_MS*zoom)),pxPerMs=()=>(timelineHeight()-40)/durationMs();
+  const gutter=38,durationMs=()=>chart.metadata.durationMs,timelineHeight=()=>editorTimelineHeight(durationMs(),zoom),pxPerMs=()=>(timelineHeight()-40)/durationMs();
 
   function noteById(id){return chart.notes.find(n=>n.id===id);}
   function setStatus(message,kind=''){status.textContent=message;status.className=`editor-status ${kind}`;}
