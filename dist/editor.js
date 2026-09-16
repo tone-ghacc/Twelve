@@ -108,6 +108,11 @@ export function initEditor({getChart,setChart,onPreview}){
 
   for(const button of document.querySelectorAll('.tool'))button.addEventListener('click',()=>{tool=button.dataset.tool;document.querySelectorAll('.tool').forEach(x=>x.classList.toggle('active',x===button));canvas.style.cursor=tool==='select'?'default':'crosshair';setStatus(tool==='select'?'ノーツ本体・端・ホールド終端をドラッグできます':'レーンをクリックして配置');});
   const snapInput=$('editor-snap'),snapError='1以上の整数を入力してください';
+  const snapOptions=$('snap-options'),showSnapOptions=()=>{snapOptions.hidden=false;snapInput.setAttribute('aria-expanded','true');},hideSnapOptions=()=>{snapOptions.hidden=true;snapInput.setAttribute('aria-expanded','false');};
+  snapInput.addEventListener('focus',showSnapOptions);snapInput.addEventListener('click',showSnapOptions);
+  for(const option of snapOptions.querySelectorAll('[data-snap]'))option.addEventListener('mousedown',event=>event.preventDefault());
+  for(const option of snapOptions.querySelectorAll('[data-snap]'))option.addEventListener('click',()=>{snapInput.value=option.dataset.snap;snapInput.dispatchEvent(new Event('input',{bubbles:true}));snapInput.focus();});
+  document.addEventListener('pointerdown',event=>{if(!event.target.closest('.snap-field'))hideSnapOptions();});
   snapInput.addEventListener('keydown',event=>{if(['-','+','.','e','E'].includes(event.key))event.preventDefault();});
   snapInput.addEventListener('input',()=>{const valid=/^[1-9]\d*$/.test(snapInput.value);snapInput.setCustomValidity(valid?'':snapError);if(valid){snapDivision=Number(snapInput.value);setStatus(`スナップ: 1小節の${snapDivision}分の1`,'ok');}});
   snapInput.addEventListener('change',()=>{if(snapInput.checkValidity())return;snapInput.value=String(snapDivision);snapInput.setCustomValidity('');setStatus(`スナップは${snapError}`,'error');});
