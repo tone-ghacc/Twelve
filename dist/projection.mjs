@@ -5,7 +5,7 @@ export function perspectiveMetrics(scale){
 }
 
 export function createPerspective(width,height,speed=1){
-  const hitY=height-68,topY=Math.max(26,Math.min(46,height*.075)),travel=3.2/Math.max(.25,Number(speed)||1),topScale=.34,depthPower=2,entrySlope=.32,exitSlope=entrySlope+(1-entrySlope)*depthPower;
+  const hitY=height-68,topY=Math.max(26,Math.min(46,height*.075)),travel=1.6/Math.max(.25,Number(speed)||1),topScale=.34,depthPower=2,entrySlope=.32,exitSlope=entrySlope+(1-entrySlope)*depthPower;
   const progress=(at,elapsed)=>{const linear=1-(at-elapsed)/travel;return linear<0?linear*entrySlope:linear<=1?entrySlope*linear+(1-entrySlope)*Math.pow(linear,depthPower):1+(linear-1)*exitSlope;};
   const laneScale=p=>topScale+(1-topScale)*p;
   const laneX=(lane,p)=>width/2+(lane/12-.5)*width*laneScale(p);
