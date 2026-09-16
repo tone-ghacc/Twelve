@@ -8,11 +8,12 @@ export function snapToMeasureDivision(value,timing,division,min=0,max=Number.POS
   const unit=measureDurationMs(timing)/division,minIndex=Math.ceil(min/unit-1e-9),maxIndex=Math.floor(max/unit+1e-9);if(maxIndex<minIndex)return Math.round(Math.max(min,Math.min(max,value)));const index=Math.max(minIndex,Math.min(maxIndex,Math.round(value/unit)));
   return Math.round(index*unit);
 }
+export function laneSpanFromDrag(startLane,endLane){const a=Math.max(0,Math.min(11,Math.trunc(startLane))),b=Math.max(0,Math.min(11,Math.trunc(endLane)));return{lane:Math.min(a,b),width:Math.abs(a-b)+1};}
 
 export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio,getAudioInfo}){
   const canvas=$('editor-canvas'),ctx=canvas.getContext('2d'),scroll=$('timeline-scroll');
   const form=$('note-form'),empty=$('inspector-empty'),json=$('chart-json'),status=$('editor-status');
-  let chart=structuredClone(getChart()),selectedId=null,tool='select',snapDivision=16,zoom=1,width=0,ratio=1,initialScrollPending=true,drag=null;
+  let chart=structuredClone(getChart()),selectedId=null,tool='select',snapDivision=16,zoom=1,width=0,ratio=1,initialScrollPending=true,drag=null,placing=null;
   const gutter=38,basePxPerMs=.04,durationMs=()=>chart.metadata.durationMs,timelineHeight=()=>Math.max(840,Math.min(16000,40+durationMs()*basePxPerMs*zoom)),pxPerMs=()=>(timelineHeight()-40)/durationMs();
 
   function noteById(id){return chart.notes.find(n=>n.id===id);}
@@ -31,6 +32,7 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
   const clamp=(value,min,max)=>Math.max(min,Math.min(max,value));
   const pointTime=py=>(timelineHeight()-20-py)/pxPerMs();
   const snapTime=(value,min=0,max=durationMs())=>snapToMeasureDivision(value,chart.timing,snapDivision,min,max);
+  const laneAt=px=>{const {laneW}=laneMetrics();return clamp(Math.floor((px-gutter)/laneW),0,11);};
   function connectedIds(id){const ids=new Set([id]);let changed=true;while(changed){changed=false;for(const n of chart.notes){if((ids.has(n.id)&&n.nextId&&!ids.has(n.nextId))||(n.nextId&&ids.has(n.nextId)&&!ids.has(n.id))){ids.add(n.id);if(n.nextId)ids.add(n.nextId);changed=true;}}}return ids;}
   function downstreamIds(n){const ids=[];let id=n.nextId;while(id){const next=noteById(id);if(!next)break;ids.push(id);id=next.nextId;}return ids;}
   function incoming(n){return chart.notes.find(x=>x.nextId===n.id);}
@@ -52,6 +54,10 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
         const top=Math.min(ny,endY),midY=(ny+endY)/2;ctx.strokeStyle='#b9f78d';ctx.lineWidth=2;ctx.strokeRect(nx-3,top-9,nw+6,Math.max(18,duration+14));ctx.fillStyle='#b9f78d';ctx.fillRect(nx-7,midY-8,8,16);ctx.fillRect(nx+nw-1,midY-8,8,16);
         if(isHold(n)){const endSpan=n.type==='flick-hold'?n.endFlick:n,ex=x(endSpan.lane)+3,ew=endSpan.width*laneW-6;ctx.fillRect(ex+ew/2-8,endY-4,16,8);if(n.type==='flick-hold'){ctx.fillStyle='#ead8ff';ctx.fillRect(ex-7,endY-8,8,16);ctx.fillRect(ex+ew-1,endY-8,8,16);}}
       }
+    }
+    if(placing){
+      const span=laneSpanFromDrag(placing.startLane,placing.currentLane),nx=x(span.lane)+3,nw=span.width*laneW-6,ny=y(placing.timeMs),hold=isHold({type:placing.type}),duration=hold?Math.max(10,1000*pxPerMs()):0,endY=hold?y(placing.timeMs+1000):ny,purple=placing.type==='flick'||placing.type==='flick-hold';
+      ctx.save();ctx.globalAlpha=.78;if(hold){ctx.fillStyle=purple?'#b875ff38':'#70dcf838';ctx.fillRect(nx,endY,nw,duration);ctx.strokeStyle=purple?'#b875ffcc':'#70dcf8cc';ctx.strokeRect(nx+.5,endY+.5,nw-1,duration-1);}ctx.fillStyle=purple?'#b875ff':hold?'#70dcf8':'#ff4e64';ctx.fillRect(nx,ny-5,nw,10);ctx.strokeStyle='#f3ffd9';ctx.setLineDash([5,4]);ctx.strokeRect(nx-.5,ny-7,nw+1,14);ctx.setLineDash([]);if(placing.type==='flick'){ctx.fillStyle='#ead8ff';ctx.textAlign='center';ctx.font='bold 13px Barlow Condensed, sans-serif';ctx.fillText('‹‹  ››',nx+nw/2,ny-8);}if(placing.type==='flick-hold'){ctx.fillStyle='#b875ff';ctx.fillRect(nx,endY-5,nw,10);ctx.fillStyle='#ead8ff';ctx.textAlign='center';ctx.font='bold 13px Barlow Condensed, sans-serif';ctx.fillText('‹‹‹  ›››',nx+nw/2,endY-8);}ctx.restore();
     }
   }
 
@@ -94,21 +100,18 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
     if(!drag)return;const active=drag,changed=active.moved&&!cancelled,next=structuredClone(chart);drag=null;canvas.style.cursor='default';if(canvas.hasPointerCapture(active.pointerId))canvas.releasePointerCapture(active.pointerId);
     if(!changed){chart=active.originChart;draw();return;}chart=active.originChart;if(!save(next,'ドラッグ編集を反映しました')){chart=active.originChart;syncJson();renderInspector();draw();}
   }
+  function finishPlacement(cancelled=false){
+    if(!placing)return;const active=placing;placing=null;if(canvas.hasPointerCapture(active.pointerId))canvas.releasePointerCapture(active.pointerId);canvas.style.cursor=tool==='select'?'default':'crosshair';if(cancelled){draw();return;}
+    const span=laneSpanFromDrag(active.startLane,active.currentLane),note={id:nextId(),type:active.type,timeMs:active.timeMs,...span};if(isHold(note))note.durationMs=1000;if(note.type==='flick-hold')note.endFlick={...span};const next=structuredClone(chart);next.notes.push(note);if(save(next,`${TYPES[note.type]}を幅${span.width}で配置しました`)){select(note.id);setStatus(`${TYPES[note.type]}を幅${span.width}で配置しました`,'ok');}
+  }
   canvas.addEventListener('pointerdown',event=>{
-    if(tool!=='select'||event.button!==0)return;const {x:px,y:py}=point(event),hit=hitTest(px,py);if(!hit){select(null);return;}if(hit.id!==selectedId)select(hit.id);const n=noteById(hit.id),mode=editHandle(n,px,py)||'move',ids=connectedIds(n.id),members=chart.notes.filter(x=>ids.has(x.id)),spans=members.flatMap(x=>x.endFlick?[x,x.endFlick]:[x]);drag={pointerId:event.pointerId,id:n.id,mode,startX:px,startY:py,originChart:structuredClone(chart),connected:ids,members:structuredClone(members),spans:structuredClone(spans),downstream:downstreamIds(n),limits:widthLimits(n,mode.startsWith('flick-')),moved:false};canvas.setPointerCapture(event.pointerId);canvas.style.cursor=mode==='move'?'grabbing':cursorFor(mode);event.preventDefault();
+    if(event.button!==0)return;const {x:px,y:py}=point(event);if(tool!=='select'){const lane=laneAt(px),timeMs=snapTime(pointTime(py),0,isHold({type:tool})?Math.max(0,durationMs()-1000):durationMs());placing={pointerId:event.pointerId,type:tool,timeMs,startLane:lane,currentLane:lane};canvas.setPointerCapture(event.pointerId);canvas.style.cursor='ew-resize';draw();event.preventDefault();return;}const hit=hitTest(px,py);if(!hit){select(null);return;}if(hit.id!==selectedId)select(hit.id);const n=noteById(hit.id),mode=editHandle(n,px,py)||'move',ids=connectedIds(n.id),members=chart.notes.filter(x=>ids.has(x.id)),spans=members.flatMap(x=>x.endFlick?[x,x.endFlick]:[x]);drag={pointerId:event.pointerId,id:n.id,mode,startX:px,startY:py,originChart:structuredClone(chart),connected:ids,members:structuredClone(members),spans:structuredClone(spans),downstream:downstreamIds(n),limits:widthLimits(n,mode.startsWith('flick-')),moved:false};canvas.setPointerCapture(event.pointerId);canvas.style.cursor=mode==='move'?'grabbing':cursorFor(mode);event.preventDefault();
   });
-  canvas.addEventListener('pointermove',event=>{const {x:px,y:py}=point(event);if(drag&&event.pointerId===drag.pointerId){previewDrag(px,py);event.preventDefault();return;}const n=noteById(selectedId);canvas.style.cursor=tool==='select'&&n?cursorFor(editHandle(n,px,py)):'crosshair';});
-  canvas.addEventListener('pointerup',event=>{if(drag&&event.pointerId===drag.pointerId)finishDrag();});
-  canvas.addEventListener('pointercancel',event=>{if(drag&&event.pointerId===drag.pointerId)finishDrag(true);});
-  canvas.addEventListener('click',event=>{
-    const height=timelineHeight(),rect=canvas.getBoundingClientRect(),px=(event.clientX-rect.left)*width/rect.width,py=(event.clientY-rect.top)*height/rect.height,{laneW}=laneMetrics();
-    if(tool==='select')return;
-    const lane=Math.max(0,Math.min(11,Math.floor((px-gutter)/laneW))),timeMs=snapTime(pointTime(py),0,isHold({type:tool})?Math.max(0,durationMs()-1000):durationMs());
-    const note={id:nextId(),type:tool,timeMs,lane,width:1};if(isHold(note))note.durationMs=1000;if(tool==='flick-hold')note.endFlick={lane,width:1};
-    const next=structuredClone(chart);next.notes.push(note);if(save(next,`${TYPES[tool]}を配置しました`))select(note.id);
-  });
+  canvas.addEventListener('pointermove',event=>{const {x:px,y:py}=point(event);if(placing&&event.pointerId===placing.pointerId){placing.currentLane=laneAt(px);const span=laneSpanFromDrag(placing.startLane,placing.currentLane);setStatus(`${TYPES[placing.type]} · レーン ${span.lane+1}〜${span.lane+span.width} · 幅${span.width}`);draw();event.preventDefault();return;}if(drag&&event.pointerId===drag.pointerId){previewDrag(px,py);event.preventDefault();return;}const n=noteById(selectedId);canvas.style.cursor=tool==='select'&&n?cursorFor(editHandle(n,px,py)):'crosshair';});
+  canvas.addEventListener('pointerup',event=>{if(placing&&event.pointerId===placing.pointerId){placing.currentLane=laneAt(point(event).x);finishPlacement();return;}if(drag&&event.pointerId===drag.pointerId)finishDrag();});
+  canvas.addEventListener('pointercancel',event=>{if(placing&&event.pointerId===placing.pointerId){finishPlacement(true);return;}if(drag&&event.pointerId===drag.pointerId)finishDrag(true);});
 
-  for(const button of document.querySelectorAll('.tool'))button.addEventListener('click',()=>{tool=button.dataset.tool;document.querySelectorAll('.tool').forEach(x=>x.classList.toggle('active',x===button));canvas.style.cursor=tool==='select'?'default':'crosshair';setStatus(tool==='select'?'ノーツ本体・端・ホールド終端をドラッグできます':'レーンをクリックして配置');});
+  for(const button of document.querySelectorAll('.tool'))button.addEventListener('click',()=>{tool=button.dataset.tool;document.querySelectorAll('.tool').forEach(x=>x.classList.toggle('active',x===button));canvas.style.cursor=tool==='select'?'default':'crosshair';setStatus(tool==='select'?'ノーツ本体・端・ホールド終端をドラッグできます':'クリックで幅1、横ドラッグで任意の幅を配置');});
   const snapInput=$('editor-snap'),snapError='1以上の整数を入力してください';
   const snapOptions=$('snap-options'),showSnapOptions=()=>{snapOptions.hidden=false;snapInput.setAttribute('aria-expanded','true');},hideSnapOptions=()=>{snapOptions.hidden=true;snapInput.setAttribute('aria-expanded','false');};
   snapInput.addEventListener('focus',showSnapOptions);snapInput.addEventListener('click',showSnapOptions);
