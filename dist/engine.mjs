@@ -1,7 +1,8 @@
 export const DURATION = 40;
 export const HOLD_INTERVAL = 0.1;
 const EPSILON = 1e-7;
-export const holdTickCount = duration => Math.ceil(duration / HOLD_INTERVAL - EPSILON) + 1;
+// The start only samples whether the lane is already held; it is not a judgement.
+export const holdTickCount = duration => Math.ceil(duration / HOLD_INTERVAL - EPSILON);
 // A flick-hold replaces the ordinary end tick with a separate flick judgement.
 export const holdBodyTickCount = n => holdTickCount(n.duration) - (n.type==='flick-hold'?1:0);
 // Hold bodies never move or change width. Their start span is their full span.
@@ -109,7 +110,7 @@ export class Game {
       if(n.duration){
         const count=holdBodyTickCount(n),isFlickHold=n.type==='flick-hold',endTime=n.time+n.duration;
         while(n.nextTick<count){
-          const tickTime=n.time+Math.min(n.nextTick*HOLD_INTERVAL,n.duration);
+          const tickTime=n.time+Math.min((n.nextTick+1)*HOLD_INTERVAL,n.duration);
           if(tickTime>t+EPSILON)break;
           // A new input only applies from its event time, never to earlier ticks.
           // An accepted end flick completes the hold within the timing window;

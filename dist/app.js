@@ -51,7 +51,7 @@ function draw(now){
       ctx.strokeStyle=tint+'7a';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x,head);ctx.lineTo(endX,tail);ctx.moveTo(x+w,head);ctx.lineTo(endX+endW,tail);ctx.stroke();
       ctx.fillStyle=isFlickHold?'#e5c9ff':'#a0ebff';ctx.fillRect(endX,tail,endW,3);
     }
-    if(n.duration){ctx.fillStyle=isFlickHold?(n.state==='holding'?'#e5c9ff80':'#b875ff40'):(n.state==='holding'?'#bcefff80':'#70dcf840');for(let tick=n.nextTick;tick<holdBodyTickCount(n);tick++){const tickTime=n.time+Math.min(tick*HOLD_INTERVAL,n.duration),tickY=hitY-(tickTime-elapsed)*pps,span=noteSpanAt(n,tickTime),tickX=span.lane*laneW+6,tickW=span.width*laneW-12;if(tickY>=0&&tickY<head-7)ctx.fillRect(tickX,tickY,Math.max(0,tickW),1);}}
+    if(n.duration){ctx.fillStyle=isFlickHold?(n.state==='holding'?'#e5c9ff80':'#b875ff40'):(n.state==='holding'?'#bcefff80':'#70dcf840');for(let tick=n.nextTick;tick<holdBodyTickCount(n);tick++){const tickTime=n.time+Math.min((tick+1)*HOLD_INTERVAL,n.duration),tickY=hitY-(tickTime-elapsed)*pps,span=noteSpanAt(n,tickTime),tickX=span.lane*laneW+6,tickW=span.width*laneW-12;if(tickY>=0&&tickY<head-7)ctx.fillRect(tickX,tickY,Math.max(0,tickW),1);}}
     const color=purple?'#b875ff':n.duration?'#70dcf8':'#ff4e64';
     ctx.shadowColor=color;ctx.shadowBlur=n.state==='holding'?20:10;ctx.fillStyle=color;ctx.fillRect(x,head-6,w,12);ctx.shadowBlur=0;ctx.fillStyle=purple?'#e5c9ff':n.duration?'#c5f4ff':'#ffb1bb';ctx.fillRect(x,head-6,w,2);
     if(n.type==='flick')drawFlickArrows(x,head,w);
