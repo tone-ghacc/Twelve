@@ -2,11 +2,17 @@ import {createDefaultChartData,validateChartData} from './engine.mjs';
 
 const $=id=>document.getElementById(id),TYPES={tap:'タップ',flick:'フリック',hold:'ホールド','flick-hold':'フリックホールド'};
 const isHold=n=>n.type==='hold'||n.type==='flick-hold';
+export function measureDurationMs(timing){const [beats=4,beatUnit=4]=timing?.timeSignature||[];return 60000/(Number(timing?.bpm)||120)*beats*4/beatUnit;}
+export function snapToMeasureDivision(value,timing,division,min=0,max=40000){
+  if(!Number.isInteger(division)||division<1)throw new Error('スナップは1以上の整数で指定してください');
+  const unit=measureDurationMs(timing)/division,minIndex=Math.ceil(min/unit-1e-9),maxIndex=Math.floor(max/unit+1e-9);if(maxIndex<minIndex)return Math.round(Math.max(min,Math.min(max,value)));const index=Math.max(minIndex,Math.min(maxIndex,Math.round(value/unit)));
+  return Math.round(index*unit);
+}
 
 export function initEditor({getChart,setChart,onPreview}){
   const canvas=$('editor-canvas'),ctx=canvas.getContext('2d'),scroll=$('timeline-scroll');
   const form=$('note-form'),empty=$('inspector-empty'),json=$('chart-json'),status=$('editor-status');
-  let chart=structuredClone(getChart()),selectedId=null,tool='select',snap=250,zoom=1,width=0,ratio=1,initialScrollPending=true,drag=null;
+  let chart=structuredClone(getChart()),selectedId=null,tool='select',snapDivision=16,zoom=1,width=0,ratio=1,initialScrollPending=true,drag=null;
   const gutter=38,basePxPerMs=.04,timelineHeight=()=>40+40000*basePxPerMs*zoom,pxPerMs=()=>basePxPerMs*zoom;
 
   function noteById(id){return chart.notes.find(n=>n.id===id);}
@@ -22,7 +28,7 @@ export function initEditor({getChart,setChart,onPreview}){
   function point(event){const height=timelineHeight(),rect=canvas.getBoundingClientRect();return{x:(event.clientX-rect.left)*width/rect.width,y:(event.clientY-rect.top)*height/rect.height};}
   const clamp=(value,min,max)=>Math.max(min,Math.min(max,value));
   const pointTime=py=>(timelineHeight()-20-py)/pxPerMs();
-  const snapTime=(value,min=0,max=40000)=>clamp(Math.round(value/snap)*snap,min,max);
+  const snapTime=(value,min=0,max=40000)=>snapToMeasureDivision(value,chart.timing,snapDivision,min,max);
   function connectedIds(id){const ids=new Set([id]);let changed=true;while(changed){changed=false;for(const n of chart.notes){if((ids.has(n.id)&&n.nextId&&!ids.has(n.nextId))||(n.nextId&&ids.has(n.nextId)&&!ids.has(n.id))){ids.add(n.id);if(n.nextId)ids.add(n.nextId);changed=true;}}}return ids;}
   function downstreamIds(n){const ids=[];let id=n.nextId;while(id){const next=noteById(id);if(!next)break;ids.push(id);id=next.nextId;}return ids;}
   function incoming(n){return chart.notes.find(x=>x.nextId===n.id);}
@@ -95,13 +101,16 @@ export function initEditor({getChart,setChart,onPreview}){
   canvas.addEventListener('click',event=>{
     const height=timelineHeight(),rect=canvas.getBoundingClientRect(),px=(event.clientX-rect.left)*width/rect.width,py=(event.clientY-rect.top)*height/rect.height,{laneW}=laneMetrics();
     if(tool==='select')return;
-    const lane=Math.max(0,Math.min(11,Math.floor((px-gutter)/laneW))),raw=Math.round(((timelineHeight()-20-py)/pxPerMs())/snap)*snap,timeMs=Math.max(0,Math.min(isHold({type:tool})?39000:40000,raw));
+    const lane=Math.max(0,Math.min(11,Math.floor((px-gutter)/laneW))),timeMs=snapTime(pointTime(py),0,isHold({type:tool})?39000:40000);
     const note={id:nextId(),type:tool,timeMs,lane,width:1};if(isHold(note))note.durationMs=1000;if(tool==='flick-hold')note.endFlick={lane,width:1};
     const next=structuredClone(chart);next.notes.push(note);if(save(next,`${TYPES[tool]}を配置しました`))select(note.id);
   });
 
   for(const button of document.querySelectorAll('.tool'))button.addEventListener('click',()=>{tool=button.dataset.tool;document.querySelectorAll('.tool').forEach(x=>x.classList.toggle('active',x===button));canvas.style.cursor=tool==='select'?'default':'crosshair';setStatus(tool==='select'?'ノーツ本体・端・ホールド終端をドラッグできます':'レーンをクリックして配置');});
-  $('editor-snap').addEventListener('change',event=>{snap=Number(event.target.value);});
+  const snapInput=$('editor-snap'),snapError='1以上の整数を入力してください';
+  snapInput.addEventListener('keydown',event=>{if(['-','+','.','e','E'].includes(event.key))event.preventDefault();});
+  snapInput.addEventListener('input',()=>{const valid=/^[1-9]\d*$/.test(snapInput.value);snapInput.setCustomValidity(valid?'':snapError);if(valid){snapDivision=Number(snapInput.value);setStatus(`スナップ: 1小節の${snapDivision}分の1`,'ok');}});
+  snapInput.addEventListener('change',()=>{if(snapInput.checkValidity())return;snapInput.value=String(snapDivision);snapInput.setCustomValidity('');setStatus(`スナップは${snapError}`,'error');});
   $('editor-zoom').addEventListener('change',event=>{const centerY=scroll.scrollTop+scroll.clientHeight/2,centerMs=Math.max(0,Math.min(40000,(timelineHeight()-20-centerY)/pxPerMs())),nextZoom=Number(event.target.value);zoom=nextZoom;resize();requestAnimationFrame(()=>{const newCenterY=timelineHeight()-20-centerMs*pxPerMs();scroll.scrollTop=Math.max(0,newCenterY-scroll.clientHeight/2);});setStatus(`時間ズーム ${Math.round(zoom*100)}%`,'ok');});
 
   function commitInspector(){
