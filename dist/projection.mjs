@@ -5,7 +5,7 @@ export function perspectiveMetrics(scale){
 }
 
 export function createPerspective(width,height,speed=1){
-  const judgementHeight=Math.max(18,Math.min(80,width/24)),bottomGap=Math.max(28,Math.min(52,height*.07)),hitY=height-bottomGap-judgementHeight/2,judgementTop=hitY-judgementHeight/2,judgementBottom=judgementTop+judgementHeight,topY=Math.max(26,Math.min(46,height*.075)),judgementTopProgress=(judgementTop-topY)/(hitY-topY),judgementBottomProgress=(judgementBottom-topY)/(hitY-topY),stageBottomProgress=(height-topY)/(hitY-topY),travel=1.6/Math.max(.25,Number(speed)||1),topScale=1/6,depthPower=2.2,entrySlope=.28,exitSlope=entrySlope+(1-entrySlope)*depthPower;
+  const judgementHeight=Math.max(18,Math.min(80,width/24)),edgeGap=Math.max(28,Math.min(52,height*.07)),bottomGap=edgeGap+judgementHeight,hitY=height-bottomGap-judgementHeight/2,judgementTop=hitY-judgementHeight/2,judgementBottom=judgementTop+judgementHeight,topY=0,judgementTopProgress=(judgementTop-topY)/(hitY-topY),judgementBottomProgress=(judgementBottom-topY)/(hitY-topY),stageBottomProgress=(height-topY)/(hitY-topY),travel=1.6/Math.max(.25,Number(speed)||1),topScale=1/6,depthPower=2.2,entrySlope=.28,exitSlope=entrySlope+(1-entrySlope)*depthPower;
   const progress=(at,elapsed)=>{const linear=1-(at-elapsed)/travel;return linear<0?linear*entrySlope:linear<=1?entrySlope*linear+(1-entrySlope)*Math.pow(linear,depthPower):1+(linear-1)*exitSlope;};
   const laneScale=p=>topScale+(1-topScale)*p;
   const laneX=(lane,p)=>width/2+(lane/12-.5)*width*laneScale(p);
