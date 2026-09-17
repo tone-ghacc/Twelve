@@ -1,5 +1,10 @@
 export const HOLD_INTERVAL = 0.1;
 const EPSILON = 1e-7;
+export const JUDGEMENT_WINDOWS = Object.freeze([
+  ['PERFECT+',.025],['PERFECT',.04],['GREAT',.07],['GOOD',.1],['BAD',.125],['MISS',.16]
+]);
+export const SCORE_MULTIPLIERS = Object.freeze({'PERFECT+':1.01,PERFECT:1,GREAT:.8,GOOD:.5,BAD:0,MISS:0,AUTO:0});
+export const timingGrade = difference => JUDGEMENT_WINDOWS.find(([,limit])=>Math.abs(difference)<=limit+EPSILON)?.[0]??null;
 // The start only samples whether the lane is already held; it is not a judgement.
 export const holdTickCount = duration => Math.ceil(duration / HOLD_INTERVAL - EPSILON);
 // A flick-hold replaces the ordinary end tick with a separate flick judgement.
@@ -69,7 +74,7 @@ export function createChart(chartData=createDefaultChartData()) {
   return chart.notes.map((n,id)=>({time:n.timeMs/1000,lane:n.lane,width:n.width,duration:(n.durationMs||0)/1000,type:n.type,flickLane:n.endFlick?.lane??n.lane,flickWidth:n.endFlick?.width??n.width,nextId:n.nextId||null,sourceId:n.id,id,state:'pending',nextTick:0,holdHits:0,endFlick:null,endJudged:false}));
 }
 export class Game {
-  constructor(auto=false,chartData=createDefaultChartData()) { this.auto=auto; this.notes=createChart(chartData); this.totalJudgements=this.notes.reduce((total,n)=>total+(n.duration?holdTickCount(n.duration):1),0);this.held=new Set();this.lastTime=0;this.combo=0;this.maxCombo=0;this.score=0;this.perfect=0;this.good=0;this.miss=0;this.earned=0;this.onJudge=()=>{}; }
+  constructor(auto=false,chartData=createDefaultChartData()) { this.auto=auto; this.notes=createChart(chartData); this.totalJudgements=this.notes.reduce((total,n)=>total+(n.duration?holdTickCount(n.duration):1),0);this.held=new Set();this.lastTime=0;this.combo=0;this.maxCombo=0;this.score=0;this.perfectPlus=0;this.perfect=0;this.great=0;this.good=0;this.bad=0;this.miss=0;this.autoCount=0;this.earned=0;this.onJudge=()=>{}; }
   covers(n,lane,time=n.time) {
     return this.spanCovers(noteSpanAt(n,time),lane);
   }
@@ -83,14 +88,17 @@ export class Game {
     this.record(n,grade,span);
   }
   record(n,grade,span=noteSpanAt(n,n.time)) {
-    if(grade==='MISS'){this.miss++;this.combo=0;}else{this.combo++;this.maxCombo=Math.max(this.maxCombo,this.combo);if(grade==='PERFECT'){this.perfect++;this.earned+=1;}else{this.good++;this.earned+=.65;}}
+    const counter={['PERFECT+']:'perfectPlus',PERFECT:'perfect',GREAT:'great',GOOD:'good',BAD:'bad',MISS:'miss',AUTO:'autoCount'}[grade];
+    if(counter)this[counter]++;
+    if(grade==='GOOD'||grade==='BAD'||grade==='MISS')this.combo=0;else{this.combo++;this.maxCombo=Math.max(this.maxCombo,this.combo);}
+    this.earned+=SCORE_MULTIPLIERS[grade]??0;
     this.score=Math.round(this.earned/this.totalJudgements*1000000);this.onJudge(grade,n,span);
   }
   press(lane,t) {
     if(this.auto)return;
     const n=this.notes.filter(n=>!n.duration&&n.type!=='flick'&&n.state==='pending'&&this.covers(n,lane,n.time)&&Math.abs(n.time-t)<=.16).sort((a,b)=>Math.abs(a.time-t)-Math.abs(b.time-t))[0];
     if(!n)return;
-    const grade=Math.abs(n.time-t)<=.075?'PERFECT':'GOOD';
+    const grade=timingGrade(n.time-t);
     this.finish(n,grade,t);
   }
   flick(lanes,t) {
@@ -99,7 +107,7 @@ export class Game {
     const flickTime=n=>n.time+(n.type==='flick-hold'?n.duration:0);
     const n=this.notes.filter(n=>(n.type==='flick'||n.type==='flick-hold')&&n.state!=='hit'&&n.state!=='miss'&&!n.endFlick&&lanes.some(lane=>this.spanCovers(flickSpan(n),lane))&&Math.abs(flickTime(n)-t)<=.16+EPSILON).sort((a,b)=>Math.abs(flickTime(a)-t)-Math.abs(flickTime(b)-t))[0];
     if(!n)return;
-    const grade=Math.abs(flickTime(n)-t)<=.075+EPSILON?'PERFECT':'GOOD';
+    const grade=timingGrade(flickTime(n)-t);
     if(n.type==='flick-hold'){
       n.endFlick={time:t,grade};
       this.update(t,this.held);
@@ -120,15 +128,15 @@ export class Game {
           // An accepted end flick completes the hold within the timing window;
           // releasing after it must not turn the last few ticks into misses.
           const pressed=(n.endFlick&&tickTime>=n.endFlick.time-EPSILON)||isHeld(n,tickTime<t-EPSILON?this.held:currentHeld,tickTime);
-          events.push({time:tickTime,n,grade:pressed?'PERFECT':'MISS',tick:true});n.nextTick++;
+          events.push({time:tickTime,n,grade:this.auto?'AUTO':pressed?'PERFECT':'MISS',tick:true});n.nextTick++;
         }
         if(t>=n.time-EPSILON)n.state=n.endFlick||isHeld(n,currentHeld,Math.min(t,endTime))?'holding':'waiting';
         if(isFlickHold&&!n.endJudged){
-          if(t>=endTime-EPSILON&&(this.auto||n.endFlick))events.push({time:Math.max(endTime,n.endFlick?.time??endTime),n,grade:n.endFlick?.grade??'PERFECT',end:true,span:flickSpan(n)});
+          if(t>=endTime-EPSILON&&(this.auto||n.endFlick))events.push({time:Math.max(endTime,n.endFlick?.time??endTime),n,grade:this.auto?'AUTO':n.endFlick?.grade??'PERFECT',end:true,span:flickSpan(n)});
           else if(t>endTime+.16+EPSILON)events.push({time:endTime+.16,n,grade:'MISS',end:true,span:flickSpan(n)});
         }
       }else if(this.auto&&t>=n.time){
-        events.push({time:n.time,n,grade:'PERFECT'});
+        events.push({time:n.time,n,grade:'AUTO'});
       }else if(t>n.time+.16){
         events.push({time:n.time+.16,n,grade:'MISS'});
       }
