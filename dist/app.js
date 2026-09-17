@@ -40,11 +40,11 @@ function drawFlickArrows(x,y,w,scale=1){
   ctx.stroke();ctx.lineCap='butt';
 }
 function draw(now){
-  const laneW=width/12,view=createPerspective(width,height,Number($('speed').value)),{hitY,topY,travel}=view;
+  const laneW=width/12,view=createPerspective(width,height,Number($('speed').value)),{hitY,judgementTop,judgementHeight,topY,travel}=view;
   ctx.clearRect(0,0,width,height);ctx.fillStyle='#090f18';ctx.fillRect(0,0,width,height);
   const active=held();if(game.auto&&phase==='playing')for(const n of game.notes)if(n.state==='holding'){const span=noteSpanAt(n,elapsed),from=Math.max(0,Math.floor(span.lane)),to=Math.min(12,Math.ceil(span.lane+span.width));for(let l=from;l<to;l++)active.add(l);}
   for(let l=0;l<12;l++){
-    const topLeft=view.laneX(l,0),topRight=view.laneX(l+1,0),bottomLeft=view.laneX(l,1),bottomRight=view.laneX(l+1,1);ctx.fillStyle=active.has(l)?'#243b39':l%2===0?'#121b28':'#101823';ctx.beginPath();ctx.moveTo(topLeft,topY);ctx.lineTo(topRight,topY);ctx.lineTo(bottomRight,hitY);ctx.lineTo(bottomLeft,hitY);ctx.closePath();ctx.fill();ctx.fillStyle=active.has(l)?'#1d302f':l%2===0?'#101925':'#0e1620';ctx.fillRect(l*laneW,hitY,laneW,height-hitY);
+    const topLeft=view.laneX(l,0),topRight=view.laneX(l+1,0),bottomLeft=view.laneX(l,1),bottomRight=view.laneX(l+1,1);ctx.fillStyle=active.has(l)?'#243b39':l%2===0?'#121b28':'#101823';ctx.beginPath();ctx.moveTo(topLeft,topY);ctx.lineTo(topRight,topY);ctx.lineTo(bottomRight,hitY);ctx.lineTo(bottomLeft,hitY);ctx.closePath();ctx.fill();ctx.fillStyle=active.has(l)?'#1d302f':l%2===0?'#101925':'#0e1620';ctx.fillRect(l*laneW,hitY,laneW,height-hitY);ctx.fillStyle=active.has(l)?'#29483d':'#111b27';ctx.fillRect(l*laneW,judgementTop,laneW,judgementHeight);
   }
   for(let l=0;l<=12;l++){ctx.strokeStyle=l%3===0?'#39495d':'#263546';ctx.lineWidth=l%3===0?1.2:1;ctx.beginPath();ctx.moveTo(view.laneX(l,0),topY);ctx.lineTo(view.laneX(l,1),hitY);ctx.stroke();}
   for(let beat=Math.floor(elapsed/.5);beat<elapsed/.5+travel*2+2;beat++){const point=view.project(beat*.5,elapsed);if(point.y<topY||point.y>hitY)continue;const left=view.laneX(0,point.p),right=view.laneX(12,point.p),lineScale=Math.max(.4,point.scale);ctx.fillStyle=beat%4===0?'#3b4d62':'#223244';ctx.fillRect(left,point.y,right-left,(beat%4===0?1.5:1)*lineScale);}
@@ -74,9 +74,9 @@ function draw(now){
   }
   ctx.restore();
   ctx.fillStyle=topFade;ctx.fillRect(0,0,width,topY+58);
-  const glow=ctx.createLinearGradient(0,hitY-25,0,hitY+15);glow.addColorStop(0,'#b9f78d00');glow.addColorStop(.65,'#b9f78d20');glow.addColorStop(1,'#b9f78d00');ctx.fillStyle=glow;ctx.fillRect(0,hitY-25,width,40);ctx.fillStyle='#b9f78d';ctx.fillRect(0,hitY,width,2);
+  const glow=ctx.createLinearGradient(0,judgementTop-12,0,judgementTop+judgementHeight+12);glow.addColorStop(0,'#b9f78d00');glow.addColorStop(.5,'#b9f78d18');glow.addColorStop(1,'#b9f78d00');ctx.fillStyle=glow;ctx.fillRect(0,judgementTop-12,width,judgementHeight+24);
   for(let i=effects.length-1;i>=0;i--){const e=effects[i],age=(now-e.start)/450;if(age>=1){effects.splice(i,1);continue;}ctx.globalAlpha=(1-age)*.8;ctx.strokeStyle=e.flick?'#c68aff':e.hold?'#70dcf8':'#ff8291';ctx.lineWidth=2;ctx.strokeRect(e.lane*laneW+3-age*5,hitY-7-age*23,e.width*laneW-6+age*10,14+age*46);ctx.globalAlpha=1;}
-  for(let l=0;l<12;l++){ctx.fillStyle=active.has(l)?'#b9f78d':'#8392a6';ctx.font=`500 ${Math.max(12,Math.min(16,laneW*.4))}px sans-serif`;ctx.textAlign='center';ctx.fillText(LABELS[l],laneW*(l+.5),height-33);ctx.fillStyle='#65758c';ctx.font='10px sans-serif';ctx.fillText(String(l+1).padStart(2,'0'),laneW*(l+.5),height-14);}
+  for(let l=0;l<12;l++){ctx.strokeStyle=active.has(l)?'#b9f78d':'#607287';ctx.lineWidth=active.has(l)?2:1.25;ctx.strokeRect(l*laneW+.75,judgementTop+.75,laneW-1.5,judgementHeight-1.5);ctx.fillStyle=active.has(l)?'#d9ffbd':'#aab7c7';ctx.font=`600 ${Math.max(11,Math.min(16,laneW*.38))}px sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(LABELS[l],laneW*(l+.5),judgementTop+judgementHeight*.72);}ctx.textBaseline='alphabetic';
 }
 function frame(now){if(phase==='playing'){elapsed=time();game.update(elapsed,held());for(const p of pointers.values())p.gesture.rest(now);if(!externalTrack)schedule();if(elapsed>=chartDuration())end();}if(now>judgeUntil)$('judgement').textContent='';draw(now);if(now-frameTime>100){const shown=Math.max(0,elapsed),duration=chartDuration();$('elapsed').textContent=formatTime(shown);$('progress-fill').style.width=`${Math.max(0,Math.min(100,shown/duration*100))}%`;const progress=document.querySelector('.progress');progress.setAttribute('aria-valuemax',String(Math.ceil(duration)));progress.setAttribute('aria-valuenow',String(Math.floor(shown)));frameTime=now;}requestAnimationFrame(frame);}
 function press(lane){if(phase==='playing'){const t=time();game.update(t,held());game.press(lane,t);}}
