@@ -35,17 +35,19 @@ export function createDefaultChartData() {
   }
   for(const chain of new Set(notes.map(n=>n.chain).filter(Boolean))){const linked=notes.filter(n=>n.chain===chain);if(linked.length===2)linked[0].nextId=linked[1].id;}
   for(const n of notes)delete n.chain;
-  return {schemaVersion:1,metadata:{title:'First light',artist:'TWELVE',difficulty:'DEMO',laneCount:12,durationMs:40000},timing:{bpm:120,offsetMs:0,timeSignature:[4,4]},notes};
+  return {schemaVersion:1,metadata:{title:'First light',artist:'TWELVE',difficulty:'DEMO',laneCount:12,durationMs:40000},timing:{bpm:120,bpmChanges:[{timeMs:20000,bpm:180}],offsetMs:0,timeSignature:[4,4]},notes};
 }
 export function validateChartData(input) {
   if(!input||input.schemaVersion!==1||!Array.isArray(input.notes))throw new Error('schemaVersion 1 の譜面JSONを指定してください');
   const chart=structuredClone(input),ids=new Set(),types=new Set(['tap','flick','hold','flick-hold']);
   const durationMs=Number(chart.metadata?.durationMs??40000);if(!Number.isInteger(durationMs)||durationMs<1000||durationMs>86400000)throw new Error('譜面の長さは1秒〜24時間の整数msで指定してください');
   chart.metadata={title:String(chart.metadata?.title||'Untitled'),artist:String(chart.metadata?.artist||''),difficulty:String(chart.metadata?.difficulty||'EDIT'),laneCount:12,durationMs};
-  const bpm=Number(chart.timing?.bpm)||120;if(bpm<20||bpm>400)throw new Error('BPMは20〜400で指定してください');
+  const bpm=Number(chart.timing?.bpm??120);if(!Number.isFinite(bpm)||bpm<20||bpm>400)throw new Error('BPMは20〜400で指定してください');
   const offsetMs=Number(chart.timing?.offsetMs??0);if(!Number.isInteger(offsetMs)||Math.abs(offsetMs)>86400000)throw new Error('オフセットは±24時間以内の整数msで指定してください');
   const timeSignature=chart.timing?.timeSignature??[4,4];if(!Array.isArray(timeSignature)||timeSignature.length!==2||timeSignature.some(value=>!Number.isInteger(value)||value<1||value>32))throw new Error('拍子は1〜32の整数2つで指定してください');
-  chart.timing={bpm,offsetMs,timeSignature:[...timeSignature]};
+  const rawBpmChanges=chart.timing?.bpmChanges??[];if(!Array.isArray(rawBpmChanges))throw new Error('BPM変更は配列で指定してください');
+  const bpmChangeTimes=new Set(),bpmChanges=rawBpmChanges.map((change,index)=>{const timeMs=Number(change?.timeMs),nextBpm=Number(change?.bpm);if(!Number.isInteger(timeMs)||timeMs<=0||timeMs>=durationMs)throw new Error(`BPM変更 ${index+1}: 時刻は譜面の途中の整数msで指定してください`);if(!Number.isFinite(nextBpm)||nextBpm<20||nextBpm>400)throw new Error(`BPM変更 ${index+1}: BPMは20〜400で指定してください`);if(bpmChangeTimes.has(timeMs))throw new Error(`BPM変更 ${index+1}: 同じ時刻に複数のBPMは設定できません`);bpmChangeTimes.add(timeMs);return{timeMs,bpm:nextBpm};}).sort((a,b)=>a.timeMs-b.timeMs);
+  chart.timing={bpm,bpmChanges,offsetMs,timeSignature:[...timeSignature]};
   for(const n of chart.notes){
     if(!n||typeof n.id!=='string'||!n.id||ids.has(n.id))throw new Error('ノーツIDは重複しない文字列にしてください');ids.add(n.id);
     if(!types.has(n.type))throw new Error(`${n.id}: 未対応のノーツ種類です`);
