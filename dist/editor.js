@@ -4,6 +4,7 @@ const $=id=>document.getElementById(id),TYPES={tap:'タップ',flick:'フリッ�
 const isHold=n=>n.type==='hold'||n.type==='flick-hold';
 export const EDITOR_BASE_PX_PER_MS=.16;
 export function editorTimelineHeight(durationMs,zoom){return Math.max(840,40+durationMs*EDITOR_BASE_PX_PER_MS*zoom);}
+export function editorCanvasWindow(totalHeight,viewportHeight,scrollTop,shift=0){const total=Math.max(1,totalHeight),viewport=Math.max(1,Math.min(total,viewportHeight||1)),overscan=Math.max(320,viewport),height=Math.min(total,viewport+overscan*2),viewportTop=Math.max(0,Math.min(total-viewport,scrollTop-shift)),top=Math.max(0,Math.min(total-height,viewportTop-overscan));return{top,height,viewportTop,overscan};}
 const sortedBpmChanges=timing=>(Array.isArray(timing?.bpmChanges)?timing.bpmChanges:[]).map(change=>({timeMs:Number(change.timeMs),bpm:Number(change.bpm)})).filter(change=>Number.isFinite(change.timeMs)&&Number.isFinite(change.bpm)).sort((a,b)=>a.timeMs-b.timeMs);
 export function bpmAtTime(timing,timeMs=0){let bpm=Number(timing?.bpm)||120;for(const change of sortedBpmChanges(timing)){if(change.timeMs>timeMs)break;bpm=change.bpm;}return bpm;}
 export function measureDurationMs(timing,timeMs=0){const [beats=4,beatUnit=4]=timing?.timeSignature||[];return 60000/bpmAtTime(timing,timeMs)*beats*4/beatUnit;}
@@ -18,10 +19,10 @@ export function laneSpanFromDrag(startLane,endLane){const a=Math.max(0,Math.min(
 export function chartAuditionEvents(chart){return chart.notes.flatMap(n=>[{timeMs:n.timeMs,type:n.type,lane:n.lane},...(n.type==='flick-hold'?[{timeMs:n.timeMs+n.durationMs,type:'flick-end',lane:n.endFlick.lane}]:[])]).sort((a,b)=>a.timeMs-b.timeMs);}
 
 export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio,getAudioInfo,onAuditionStart,onAuditionStop,onAuditionHit}){
-  const canvas=$('editor-canvas'),ctx=canvas.getContext('2d'),scroll=$('timeline-scroll');
+  const canvas=$('editor-canvas'),ctx=canvas.getContext('2d'),scroll=$('timeline-scroll'),content=$('timeline-content');
   const form=$('note-form'),empty=$('inspector-empty'),json=$('chart-json'),status=$('editor-status');
   const viewport=$('timeline-viewport'),playToggle=$('editor-play-toggle'),playStop=$('editor-play-stop'),playTime=$('editor-play-time');
-  let chart=structuredClone(getChart()),selectedId=null,tool='select',snapDivision=16,zoom=1,width=0,ratio=1,initialScrollPending=true,drag=null,placing=null,audition={state:'stopped',timeMs:0,originTimeMs:0,startedAt:0,nextEvent:0,events:[],frame:0};
+  let chart=structuredClone(getChart()),selectedId=null,tool='select',snapDivision=16,zoom=1,width=0,ratio=1,renderTop=0,renderHeight=0,scrollFrame=0,initialScrollPending=true,drag=null,placing=null,audition={state:'stopped',timeMs:0,originTimeMs:0,startedAt:0,nextEvent:0,events:[],frame:0};
   const gutter=38,durationMs=()=>chart.metadata.durationMs,timelineHeight=()=>editorTimelineHeight(durationMs(),zoom),pxPerMs=()=>(timelineHeight()-40)/durationMs();
 
   function noteById(id){return chart.notes.find(n=>n.id===id);}
@@ -42,7 +43,7 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
   }
 
   function laneMetrics(){const laneW=(width-gutter)/12;return {laneW,x:lane=>gutter+lane*laneW,y:ms=>timelineHeight()-20-ms*pxPerMs()};}
-  function point(event){const height=timelineHeight(),rect=canvas.getBoundingClientRect();return{x:(event.clientX-rect.left)*width/rect.width,y:(event.clientY-rect.top)*height/rect.height};}
+  function point(event){const rect=canvas.getBoundingClientRect();return{x:(event.clientX-rect.left)*width/rect.width,y:renderTop+(event.clientY-rect.top)*renderHeight/rect.height};}
   const clamp=(value,min,max)=>Math.max(min,Math.min(max,value));
   const pointTime=py=>(timelineHeight()-20-py)/pxPerMs();
   const snapTime=(value,min=0,max=durationMs())=>snapToMeasureDivision(value,chart.timing,snapDivision,min,max);
@@ -53,7 +54,7 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
   function spanOf(n){return n.type==='flick-hold'?n.endFlick:n;}
   function widthLimits(n,endFlick=false){let minLeft=0,maxRight=12,requiredLeft=12,requiredRight=0;const parent=!endFlick&&incoming(n);if(parent){const span=spanOf(parent);minLeft=span.lane;maxRight=span.lane+span.width;}const child=(endFlick||n.type!=='flick-hold')&&n.nextId?noteById(n.nextId):null;if(child){requiredLeft=child.lane;requiredRight=child.lane+child.width;}return{minLeft,maxRight,requiredLeft,requiredRight};}
   function draw(){
-    const height=timelineHeight(),{laneW,x,y}=laneMetrics();ctx.clearRect(0,0,width,height);ctx.fillStyle='#0b121b';ctx.fillRect(0,0,width,height);
+    const height=timelineHeight(),{laneW,x,y}=laneMetrics();ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,canvas.width,canvas.height);ctx.restore();ctx.fillStyle='#0b121b';ctx.fillRect(0,renderTop,width,renderHeight);
     for(let lane=0;lane<12;lane++){ctx.fillStyle=lane%2?'#101a26':'#0e1722';ctx.fillRect(x(lane),0,laneW,height);ctx.fillStyle='#263545';ctx.fillRect(x(lane),0,1,height);}
     ctx.textAlign='right';ctx.font='11px Barlow Condensed, sans-serif';
     const segments=timelineGridSegments(chart.timing,durationMs(),snapDivision),totalMeasures=segments.reduce((sum,segment)=>sum+Math.ceil((segment.endMs-segment.startMs)/segment.measureMs),0),totalSubdivisions=totalMeasures*snapDivision;
@@ -77,12 +78,15 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
     }
   }
 
-  function resize(){const height=timelineHeight();width=Math.max(480,canvas.clientWidth);ratio=Math.min(devicePixelRatio||1,2,16000/height);canvas.style.height=`${height}px`;canvas.width=Math.round(width*ratio);canvas.height=Math.round(height*ratio);ctx.setTransform(ratio,0,0,ratio,0,0);draw();applyAuditionTransform();}
-  new ResizeObserver(resize).observe(canvas);
+  const auditionShift=()=>Math.round((audition.timeMs-audition.originTimeMs)*pxPerMs());
+  function updateCanvasWindow(force=false){const total=timelineHeight(),window=editorCanvasWindow(total,scroll.clientHeight,scroll.scrollTop,auditionShift()),viewBottom=window.viewportTop+Math.max(1,Math.min(total,scroll.clientHeight||1)),inset=window.overscan*.4,sizeChanged=Math.abs(renderHeight-window.height)>.5,topGuard=renderTop<=0?0:renderTop+inset,bottomEdge=renderTop+renderHeight,bottomGuard=bottomEdge>=total?total:bottomEdge-inset;if(!force&&!sizeChanged&&window.viewportTop>=topGuard&&viewBottom<=bottomGuard)return;renderTop=window.top;renderHeight=window.height;content.style.height=`${total}px`;canvas.style.top=`${renderTop}px`;canvas.style.height=`${renderHeight}px`;canvas.width=Math.max(1,Math.round(width*ratio));canvas.height=Math.max(1,Math.round(renderHeight*ratio));ctx.setTransform(ratio,0,0,ratio,0,-renderTop*ratio);draw();}
+  function resize(){content.style.height=`${timelineHeight()}px`;width=Math.max(480,scroll.clientWidth);ratio=Math.min(devicePixelRatio||1,2);canvas.style.transform=`translateY(${auditionShift()}px)`;updateCanvasWindow(true);}
+  new ResizeObserver(resize).observe(scroll);
+  scroll.addEventListener('scroll',()=>{if(scrollFrame)return;scrollFrame=requestAnimationFrame(()=>{scrollFrame=0;updateCanvasWindow();});});
 
   function syncAuditionUi(){const playing=audition.state==='playing',paused=audition.state==='paused',atEnd=audition.timeMs>=durationMs();playToggle.textContent=playing?'Ⅱ 一時停止':paused?'▶ 続ける':atEnd?'↺ もう一度':'▶ 再生確認';playStop.disabled=audition.state==='stopped'&&!audition.timeMs;playTime.value=formatPrecise(audition.timeMs);viewport.classList.toggle('auditioning',playing||paused);}
-  function applyAuditionTransform(){canvas.style.transform=`translateY(${Math.round((audition.timeMs-audition.originTimeMs)*pxPerMs())}px)`;}
-  function resetAuditionPosition(){audition.timeMs=0;audition.originTimeMs=0;audition.nextEvent=0;canvas.style.transform='translateY(0px)';playTime.value=formatPrecise(0);scroll.scrollTop=Math.max(0,scroll.scrollHeight-scroll.clientHeight);}
+  function applyAuditionTransform(){canvas.style.transform=`translateY(${auditionShift()}px)`;updateCanvasWindow();}
+  function resetAuditionPosition(){audition.timeMs=0;audition.originTimeMs=0;audition.nextEvent=0;canvas.style.transform='translateY(0px)';playTime.value=formatPrecise(0);scroll.scrollTop=Math.max(0,scroll.scrollHeight-scroll.clientHeight);updateCanvasWindow(true);}
   function pauseAudition(message='再生確認を一時停止しました'){if(audition.state!=='playing')return;cancelAnimationFrame(audition.frame);audition.frame=0;audition.state='paused';onAuditionStop?.();syncAuditionUi();setStatus(message);}
   function stopAudition(reset=true,message='再生確認を停止しました'){if(audition.frame)cancelAnimationFrame(audition.frame);audition.frame=0;if(audition.state==='playing'||audition.state==='paused')onAuditionStop?.();audition.state='stopped';if(reset)resetAuditionPosition();syncAuditionUi();if(message)setStatus(message);}
   function auditionFrame(now){if(audition.state!=='playing')return;audition.timeMs=Math.min(durationMs(),now-audition.startedAt);const due=[];while(audition.nextEvent<audition.events.length&&audition.events[audition.nextEvent].timeMs<=audition.timeMs)due.push(audition.events[audition.nextEvent++]);if(due.length)onAuditionHit?.(due);applyAuditionTransform();playTime.value=formatPrecise(audition.timeMs);if(audition.timeMs>=durationMs()){audition.state='stopped';audition.frame=0;onAuditionStop?.(true);syncAuditionUi();setStatus('譜面の終端まで再生しました','ok');return;}audition.frame=requestAnimationFrame(auditionFrame);}
