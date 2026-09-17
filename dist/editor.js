@@ -15,6 +15,7 @@ export function snapToMeasureDivision(value,timing,division,min=0,max=Number.POS
   for(const segment of timelineGridSegments(timing,duration,division)){const lower=Math.max(min,segment.startMs),upper=Math.min(max,segment.endMs),unit=segment.subdivisionMs;if(upper<lower)continue;const minIndex=Math.ceil((lower-segment.startMs)/unit-1e-9),maxIndex=Number.isFinite(upper)?Math.floor((upper-segment.startMs)/unit+1e-9):Number.POSITIVE_INFINITY;if(maxIndex<minIndex)continue;const index=Math.max(minIndex,Math.min(maxIndex,Math.round((value-segment.startMs)/unit)));candidates.push(segment.startMs+index*unit);}
   if(!candidates.length)return Math.round(Math.max(min,Math.min(max,value)));return Math.round(candidates.sort((a,b)=>Math.abs(a-value)-Math.abs(b-value)||a-b)[0]);
 }
+export function snapHoldDuration(startTimeMs,endTimeMs,timing,division,minDuration,maxDuration){const snappedEnd=snapToMeasureDivision(endTimeMs,timing,division,startTimeMs+minDuration,startTimeMs+maxDuration);return snappedEnd-startTimeMs;}
 export function laneSpanFromDrag(startLane,endLane){const a=Math.max(0,Math.min(11,Math.trunc(startLane))),b=Math.max(0,Math.min(11,Math.trunc(endLane)));return{lane:Math.min(a,b),width:Math.abs(a-b)+1};}
 export function chartAuditionEvents(chart){return chart.notes.flatMap(n=>[{timeMs:n.timeMs,type:n.type,lane:n.lane},...(n.type==='flick-hold'?[{timeMs:n.timeMs+n.durationMs,type:'flick-end',lane:n.endFlick.lane}]:[])]).sort((a,b)=>a.timeMs-b.timeMs);}
 
@@ -117,7 +118,7 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
       const laneDelta=clamp(Math.round((px-drag.startX)/laneW),-minLane,12-maxLane),targetTime=snapTime(origin.timeMs+pointTime(py)-pointTime(drag.startY),origin.timeMs-minTime,origin.timeMs+durationMs()-maxTime),timeDelta=targetTime-origin.timeMs;
       for(const item of next.notes.filter(x=>ids.has(x.id))){item.timeMs+=timeDelta;item.lane+=laneDelta;if(item.endFlick)item.endFlick.lane+=laneDelta;}
     }else if(drag.mode==='duration'){
-      const descendants=drag.downstream,currentLatest=Math.max(origin.timeMs+origin.durationMs,...drag.members.filter(x=>descendants.includes(x.id)).map(x=>x.timeMs+(x.durationMs||0))),maxDuration=origin.durationMs+durationMs()-currentLatest,newDuration=snapTime(pointTime(py)-origin.timeMs,100,maxDuration),delta=newDuration-origin.durationMs;n.durationMs=newDuration;for(const item of next.notes.filter(x=>descendants.includes(x.id)))item.timeMs+=delta;
+      const descendants=drag.downstream,currentLatest=Math.max(origin.timeMs+origin.durationMs,...drag.members.filter(x=>descendants.includes(x.id)).map(x=>x.timeMs+(x.durationMs||0))),maxDuration=origin.durationMs+durationMs()-currentLatest,newDuration=snapHoldDuration(origin.timeMs,pointTime(py),chart.timing,snapDivision,100,maxDuration),delta=newDuration-origin.durationMs;n.durationMs=newDuration;for(const item of next.notes.filter(x=>descendants.includes(x.id)))item.timeMs+=delta;
     }else{
       const endFlick=drag.mode.startsWith('flick-'),target=endFlick?n.endFlick:n,originalTarget=endFlick?origin.endFlick:origin,limits=drag.limits,boundary=Math.round((px-gutter)/laneW);
       if(drag.mode.endsWith('left')){const right=originalTarget.lane+originalTarget.width;target.lane=clamp(boundary,limits.minLeft,Math.min(right-1,limits.requiredLeft));target.width=right-target.lane;}
