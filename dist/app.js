@@ -89,6 +89,9 @@ const playWorkspace=$('play-workspace'),stage=$('stage'),preventBrowserGesture=e
 for(const type of ['selectstart','contextmenu','dragstart'])stage.addEventListener(type,preventBrowserGesture);
 for(const type of ['gesturestart','gesturechange','gestureend'])playWorkspace.addEventListener(type,preventBrowserGesture,{passive:false});
 playWorkspace.addEventListener('touchmove',event=>{if(event.touches.length>1)event.preventDefault();},{passive:false});
+let lastTouchEndAt=-Infinity;
+playWorkspace.addEventListener('touchend',event=>{const now=Number.isFinite(event.timeStamp)?event.timeStamp:performance.now();if(now-lastTouchEndAt<350)event.preventDefault();lastTouchEndAt=now;},{passive:false});
+playWorkspace.addEventListener('dblclick',preventBrowserGesture);
 function movePointer(e){
   const p=pointers.get(e.pointerId);if(!p||phase!=='playing')return;
   const lane=pointerLane(e),x=e.clientX-canvas.getBoundingClientRect().left;
