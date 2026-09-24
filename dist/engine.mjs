@@ -1,21 +1,48 @@
 export const HOLD_INTERVAL = 0.1;
+export const HOLD_INTERVAL_MS = Math.round(HOLD_INTERVAL * 1000);
 const EPSILON = 1e-7;
+export const HOLD_START_TYPES = Object.freeze(['none','normal','scratch']);
 export const JUDGEMENT_WINDOWS = Object.freeze([
   ['PERFECT+',.025],['PERFECT',.04],['GREAT',.07],['GOOD',.1],['BAD',.125],['MISS',.16]
 ]);
 export const SCORE_MULTIPLIERS = Object.freeze({'PERFECT+':1.01,PERFECT:1,GREAT:.8,GOOD:.5,BAD:0,MISS:0,AUTO:0});
 export const timingGrade = difference => JUDGEMENT_WINDOWS.find(([,limit])=>Math.abs(difference)<=limit+EPSILON)?.[0]??null;
-// The start only samples whether the lane is already held; it is not a judgement.
-export const holdTickCount = duration => Math.ceil(duration / HOLD_INTERVAL - EPSILON);
-// A flick-hold replaces the ordinary end tick with a separate flick judgement.
-export const holdBodyTickCount = n => holdTickCount(n.duration) - (n.type==='flick-hold'?1:0);
+export const isHoldNote = n => n.type==='hold'||n.type==='flick-hold';
+
+// Checkpoints are relative millisecond offsets. The endpoint is always a
+// separate judgement, so it is deliberately excluded from this list.
+export function defaultHoldCheckpoints(durationMs,intervalMs=HOLD_INTERVAL_MS){
+  const result=[];
+  for(let offset=intervalMs;offset<durationMs;offset+=intervalMs)result.push(offset);
+  return result;
+}
+
+export const holdTickCount = duration => defaultHoldCheckpoints(Math.round(duration*1000)).length+1;
+export const holdBodyTickCount = n => Array.isArray(n.checkpoints)?n.checkpoints.length:defaultHoldCheckpoints(Math.round(n.duration*1000)).length;
 // Hold bodies never move or change width. Their start span is their full span.
 export const noteSpanAt = n => ({lane:n.lane,width:n.width});
 export const flickSpan = n => n.type==='flick-hold'
-  ? {lane:n.flickLane??n.lane,width:n.flickWidth??n.width}
+  ? {lane:n.flickLane??n.endFlick?.lane??n.lane,width:n.flickWidth??n.endFlick?.width??n.width}
   : {lane:n.lane,width:n.width};
 export const KEYS = ['KeyQ','KeyW','KeyE','KeyR','KeyT','KeyY','KeyU','KeyI','KeyO','KeyP','BracketLeft','BracketRight'];
 export const LABELS = ['Q','W','E','R','T','Y','U','I','O','P','[',']'];
+
+export function createJudgementEvents(note){
+  const events=[];
+  const push=(suffix,kind,timeMs,input,span={lane:note.lane,width:note.width})=>events.push({id:`${note.id}:${suffix}`,noteId:note.id,kind,timeMs,input,lane:span.lane,width:span.width,critical:!!note.critical});
+  if(!isHoldNote(note)){
+    push('note',note.type==='flick'?(note.critical?'critical-flick':'flick'):(note.critical?'critical-tap':'tap'),note.timeMs,note.type==='flick'?'flick':'press');
+    return events;
+  }
+  if(note.startType==='normal')push('start',note.critical?'critical-hold-start':'hold-start',note.timeMs,'press');
+  else if(note.startType==='scratch')push('start',note.critical?'critical-scratch-start':'scratch-start',note.timeMs,'flick');
+  for(const offset of note.checkpoints??defaultHoldCheckpoints(note.durationMs))push(`checkpoint-${offset}`,'hold-checkpoint',note.timeMs+offset,'hold');
+  const endTime=note.timeMs+note.durationMs;
+  if(note.type==='flick-hold')push('end','flick-end',endTime,'flick',note.endFlick);
+  else push('end','hold-end',endTime,'hold');
+  return events;
+}
+
 export function createDefaultChartData() {
   const notes = [];
   const add = (time,lane,width=1,duration=0,type=duration?'hold':'tap',flickLane=lane,flickWidth=width,chain=null) => notes.push({timeMs:Math.round(time*1000),lane,width,durationMs:Math.round(duration*1000),type,flickLane,flickWidth,chain});
@@ -33,15 +60,25 @@ export function createDefaultChartData() {
   }
   add(36,0,4,1.5); add(36,8,4,1.5,'flick-hold'); add(38,0,12,0,'flick');
   notes.sort((a,b)=>a.timeMs-b.timeMs||a.lane-b.lane).forEach((n,index)=>n.id=`note-${String(index+1).padStart(3,'0')}`);
-  for(const n of notes){
+  let holdIndex=0;
+  for(const [index,n] of notes.entries()){
     if(n.type==='flick-hold')n.endFlick={lane:n.flickLane,width:n.flickWidth};
     delete n.flickLane;delete n.flickWidth;
-    if(!n.durationMs)delete n.durationMs;
+    if(n.durationMs){
+      n.startType=['normal','scratch','none'][holdIndex%3];
+      n.checkpoints=defaultHoldCheckpoints(n.durationMs);
+      if(holdIndex%4===1)n.critical=true;
+      holdIndex++;
+    }else{
+      if(index%11===2)n.critical=true;
+      delete n.durationMs;
+    }
   }
-  for(const chain of new Set(notes.map(n=>n.chain).filter(Boolean))){const linked=notes.filter(n=>n.chain===chain);if(linked.length===2)linked[0].nextId=linked[1].id;}
+  for(const chain of new Set(notes.map(n=>n.chain).filter(Boolean))){const linked=notes.filter(n=>n.chain===chain);if(linked.length===2){linked[0].nextId=linked[1].id;linked[1].startType='none';}}
   for(const n of notes)delete n.chain;
   return {schemaVersion:1,metadata:{title:'First light',artist:'TWELVE',difficulty:'DEMO',laneCount:12,durationMs:40000},timing:{bpm:120,bpmChanges:[{timeMs:20000,bpm:180}],offsetMs:0,timeSignature:[4,4]},notes};
 }
+
 export function validateChartData(input) {
   if(!input||input.schemaVersion!==1||!Array.isArray(input.notes))throw new Error('schemaVersion 1 の譜面JSONを指定してください');
   const chart=structuredClone(input),ids=new Set(),types=new Set(['tap','flick','hold','flick-hold']);
@@ -58,96 +95,102 @@ export function validateChartData(input) {
     if(!types.has(n.type))throw new Error(`${n.id}: 未対応のノーツ種類です`);
     for(const key of ['timeMs','lane','width'])if(!Number.isInteger(n[key]))throw new Error(`${n.id}: ${key} は整数で指定してください`);
     if(n.timeMs<0||n.timeMs>durationMs||n.lane<0||n.width<1||n.lane+n.width>12)throw new Error(`${n.id}: 時刻またはレーン範囲が不正です`);
-    if(n.type==='hold'||n.type==='flick-hold'){if(!Number.isInteger(n.durationMs)||n.durationMs<100||n.timeMs+n.durationMs>durationMs)throw new Error(`${n.id}: ホールド時間が不正です`);}
-    else {delete n.durationMs;delete n.endFlick;delete n.nextId;}
+    n.critical=n.critical===true;
+    if(isHoldNote(n)){
+      if(!Number.isInteger(n.durationMs)||n.durationMs<100||n.timeMs+n.durationMs>durationMs)throw new Error(`${n.id}: ホールド時間が不正です`);
+      n.startType=n.startType??'none';
+      if(!HOLD_START_TYPES.includes(n.startType))throw new Error(`${n.id}: startType は none / normal / scratch で指定してください`);
+      n.checkpoints=n.checkpoints??defaultHoldCheckpoints(n.durationMs);
+      if(!Array.isArray(n.checkpoints)||n.checkpoints.some(value=>!Number.isInteger(value)||value<=0||value>=n.durationMs))throw new Error(`${n.id}: checkpoints は始点より後、終点より前の相対整数msで指定してください`);
+      if(new Set(n.checkpoints).size!==n.checkpoints.length)throw new Error(`${n.id}: checkpoints を重複させることはできません`);
+      n.checkpoints.sort((a,b)=>a-b);
+    }else {delete n.durationMs;delete n.endFlick;delete n.nextId;delete n.startType;delete n.checkpoints;}
     if(n.type==='flick-hold'){
       const f=n.endFlick;if(!f||!Number.isInteger(f.lane)||!Number.isInteger(f.width)||f.lane<0||f.width<1||f.lane+f.width>12)throw new Error(`${n.id}: 終点フリックの範囲が不正です`);
+      n.endFlick={lane:f.lane,width:f.width};
     }else delete n.endFlick;
   }
   const incoming=new Set();
-  for(const n of chart.notes){if(!n.nextId)continue;const next=chart.notes.find(x=>x.id===n.nextId);if(!next||!n.durationMs||!next.durationMs)throw new Error(`${n.id}: 接続先はホールドにしてください`);if(incoming.has(next.id))throw new Error(`${next.id}: 複数のノーツからは接続できません`);incoming.add(next.id);const span=n.type==='flick-hold'?n.endFlick:n;if(next.timeMs!==n.timeMs+n.durationMs||next.lane<span.lane||next.lane+next.width>span.lane+span.width)throw new Error(`${n.id}: 接続先を終点時刻と範囲内に配置してください`);}
+  for(const n of chart.notes){if(!n.nextId)continue;const next=chart.notes.find(x=>x.id===n.nextId);if(!next||!isHoldNote(n)||!isHoldNote(next))throw new Error(`${n.id}: 接続先はホールドにしてください`);if(incoming.has(next.id))throw new Error(`${next.id}: 複数のノーツからは接続できません`);incoming.add(next.id);const span=n.type==='flick-hold'?n.endFlick:n;if(next.timeMs!==n.timeMs+n.durationMs||next.lane<span.lane||next.lane+next.width>span.lane+span.width)throw new Error(`${n.id}: 接続先を終点時刻と範囲内に配置してください`);}
   for(const start of chart.notes){const seen=new Set();let n=start;while(n?.nextId){if(seen.has(n.id))throw new Error('連結を循環させることはできません');seen.add(n.id);n=chart.notes.find(x=>x.id===n.nextId);}}
   chart.notes.sort((a,b)=>a.timeMs-b.timeMs||a.lane-b.lane||a.id.localeCompare(b.id));return chart;
 }
+
 export function createChart(chartData=createDefaultChartData()) {
   const chart=validateChartData(chartData);
-  return chart.notes.map((n,id)=>({time:n.timeMs/1000,lane:n.lane,width:n.width,duration:(n.durationMs||0)/1000,type:n.type,flickLane:n.endFlick?.lane??n.lane,flickWidth:n.endFlick?.width??n.width,nextId:n.nextId||null,sourceId:n.id,id,state:'pending',nextTick:0,holdHits:0,endFlick:null,endJudged:false}));
+  return chart.notes.map((n,id)=>({
+    time:n.timeMs/1000,lane:n.lane,width:n.width,duration:(n.durationMs||0)/1000,type:n.type,
+    flickLane:n.endFlick?.lane??n.lane,flickWidth:n.endFlick?.width??n.width,nextId:n.nextId||null,
+    sourceId:n.id,id,critical:!!n.critical,startType:n.startType??null,checkpoints:n.checkpoints??[],
+    events:createJudgementEvents(n).map(event=>({...event,time:event.timeMs/1000,state:'pending',judgedAt:null,grade:null})),
+    state:'pending',holdHits:0
+  }));
 }
+
 export class Game {
-  constructor(auto=false,chartData=createDefaultChartData()) { this.auto=auto; this.notes=createChart(chartData); this.totalJudgements=this.notes.reduce((total,n)=>total+(n.duration?holdTickCount(n.duration):1),0);this.held=new Set();this.lastTime=0;this.combo=0;this.maxCombo=0;this.score=0;this.perfectPlus=0;this.perfect=0;this.great=0;this.good=0;this.bad=0;this.miss=0;this.autoCount=0;this.earned=0;this.onJudge=()=>{}; }
-  covers(n,lane,time=n.time) {
-    return this.spanCovers(noteSpanAt(n,time),lane);
+  constructor(auto=false,chartData=createDefaultChartData()) {
+    this.auto=auto;this.notes=createChart(chartData);this.totalJudgements=this.notes.reduce((total,n)=>total+n.events.length,0);this.held=new Set();this.lastTime=0;this.combo=0;this.maxCombo=0;this.score=0;this.perfectPlus=0;this.perfect=0;this.great=0;this.good=0;this.bad=0;this.miss=0;this.autoCount=0;this.earned=0;this.onJudge=()=>{};
   }
-  spanCovers(span,lane) {
-    const center=lane+.5;
-    return center>=span.lane-EPSILON&&center<span.lane+span.width+EPSILON;
+  covers(n,lane){return this.spanCovers(noteSpanAt(n),lane);}
+  spanCovers(span,lane){const center=lane+.5;return center>=span.lane-EPSILON&&center<span.lane+span.width+EPSILON;}
+  eventSpan(event){return{lane:event.lane,width:event.width};}
+  eventCovers(event,lane){return this.spanCovers(this.eventSpan(event),lane);}
+  finishEvent(n,event,grade,at=event.time){
+    if(!event||event.state!=='pending'||!grade)return;
+    event.state=grade==='MISS'?'miss':'hit';event.grade=grade;event.judgedAt=at;
+    if(event.input==='hold'&&grade!=='MISS')n.holdHits++;
+    this.record(n,grade,this.eventSpan(event),event);
+    this.updateNoteState(n);
   }
-  finish(n,grade,at=n.time,span=noteSpanAt(n,at)) {
-    if(n.state==='hit'||n.state==='miss')return;
-    n.state=grade==='MISS'?'miss':'hit';
-    this.record(n,grade,span);
+  // Backward-compatible helper for callers that finish a standalone note.
+  finish(n,grade,at=n.time){this.finishEvent(n,n.events.find(event=>event.state==='pending'),grade,at);}
+  updateNoteState(n){
+    if(n.events.every(event=>event.state!=='pending')){n.state=n.events.some(event=>event.state==='hit')?'hit':'miss';return;}
+    if(n.duration&&this.lastTime>=n.time-EPSILON&&this.lastTime<=n.time+n.duration+EPSILON)n.state=this.isSpanHeld(n,this.held)?'holding':'waiting';
+    else n.state='pending';
   }
-  record(n,grade,span=noteSpanAt(n,n.time)) {
+  record(n,grade,span=noteSpanAt(n),event=null) {
     const counter={['PERFECT+']:'perfectPlus',PERFECT:'perfect',GREAT:'great',GOOD:'good',BAD:'bad',MISS:'miss',AUTO:'autoCount'}[grade];
     if(counter)this[counter]++;
     if(grade==='GOOD'||grade==='BAD'||grade==='MISS')this.combo=0;else{this.combo++;this.maxCombo=Math.max(this.maxCombo,this.combo);}
     this.earned+=SCORE_MULTIPLIERS[grade]??0;
-    this.score=Math.round(this.earned/this.totalJudgements*1000000);this.onJudge(grade,n,span);
+    this.score=this.totalJudgements?Math.round(this.earned/this.totalJudgements*1000000):0;this.onJudge(grade,n,span,event);
   }
+  isSpanHeld(n,lanes){return this.auto||[...lanes].some(lane=>this.covers(n,lane));}
   press(lane,t) {
     if(this.auto)return;
-    const n=this.notes.filter(n=>!n.duration&&n.type!=='flick'&&n.state==='pending'&&this.covers(n,lane,n.time)&&Math.abs(n.time-t)<=.16).sort((a,b)=>Math.abs(a.time-t)-Math.abs(b.time-t))[0];
-    if(!n)return;
-    const grade=timingGrade(n.time-t);
-    this.finish(n,grade,t);
+    const candidates=[];
+    for(const n of this.notes)for(const event of n.events)if(event.state==='pending'&&event.input==='press'&&this.eventCovers(event,lane)&&Math.abs(event.time-t)<=.16+EPSILON)candidates.push({n,event});
+    const hit=candidates.sort((a,b)=>Math.abs(a.event.time-t)-Math.abs(b.event.time-t)||a.event.time-b.event.time)[0];
+    if(hit)this.finishEvent(hit.n,hit.event,timingGrade(hit.event.time-t),t);
   }
   flick(lanes,t) {
     if(this.auto)return;
     this.update(t,this.held);
-    const flickTime=n=>n.time+(n.type==='flick-hold'?n.duration:0);
-    const n=this.notes.filter(n=>(n.type==='flick'||n.type==='flick-hold')&&n.state!=='hit'&&n.state!=='miss'&&!n.endFlick&&lanes.some(lane=>this.spanCovers(flickSpan(n),lane))&&Math.abs(flickTime(n)-t)<=.16+EPSILON).sort((a,b)=>Math.abs(flickTime(a)-t)-Math.abs(flickTime(b)-t))[0];
-    if(!n)return;
-    const grade=timingGrade(flickTime(n)-t);
-    if(n.type==='flick-hold'){
-      n.endFlick={time:t,grade};
-      this.update(t,this.held);
-    }else this.finish(n,grade,t,flickSpan(n));
+    const candidates=[];
+    for(const n of this.notes)for(const event of n.events)if(event.state==='pending'&&event.input==='flick'&&lanes.some(lane=>this.eventCovers(event,lane))&&Math.abs(event.time-t)<=.16+EPSILON)candidates.push({n,event});
+    const hit=candidates.sort((a,b)=>Math.abs(a.event.time-t)-Math.abs(b.event.time-t)||a.event.time-b.event.time)[0];
+    if(hit)this.finishEvent(hit.n,hit.event,timingGrade(hit.event.time-t),t);
   }
   update(t,held) {
     if(t<this.lastTime-EPSILON)return;
-    const currentHeld=new Set(held),events=[];
-    const isHeld=(n,lanes,at)=>this.auto||[...lanes].some(lane=>this.covers(n,lane,at));
+    const currentHeld=new Set(held),due=[];
     for(const n of this.notes){
-      if(n.state==='hit'||n.state==='miss')continue;
-      if(n.duration){
-        const count=holdBodyTickCount(n),isFlickHold=n.type==='flick-hold',endTime=n.time+n.duration;
-        while(n.nextTick<count){
-          const tickTime=n.time+Math.min((n.nextTick+1)*HOLD_INTERVAL,n.duration);
-          if(tickTime>t+EPSILON)break;
-          // A new input only applies from its event time, never to earlier ticks.
-          // An accepted end flick completes the hold within the timing window;
-          // releasing after it must not turn the last few ticks into misses.
-          const pressed=(n.endFlick&&tickTime>=n.endFlick.time-EPSILON)||isHeld(n,tickTime<t-EPSILON?this.held:currentHeld,tickTime);
-          events.push({time:tickTime,n,grade:this.auto?'AUTO':pressed?'PERFECT':'MISS',tick:true});n.nextTick++;
-        }
-        if(t>=n.time-EPSILON)n.state=n.endFlick||isHeld(n,currentHeld,Math.min(t,endTime))?'holding':'waiting';
-        if(isFlickHold&&!n.endJudged){
-          if(t>=endTime-EPSILON&&(this.auto||n.endFlick))events.push({time:Math.max(endTime,n.endFlick?.time??endTime),n,grade:this.auto?'AUTO':n.endFlick?.grade??'PERFECT',end:true,span:flickSpan(n)});
-          else if(t>endTime+.16+EPSILON)events.push({time:endTime+.16,n,grade:'MISS',end:true,span:flickSpan(n)});
-        }
-      }else if(this.auto&&t>=n.time){
-        events.push({time:n.time,n,grade:'AUTO'});
-      }else if(t>n.time+.16){
-        events.push({time:n.time+.16,n,grade:'MISS'});
+      const acceptedEndFlick=n.events.find(event=>event.kind==='flick-end'&&event.state==='hit');
+      for(const event of n.events){
+        if(event.state!=='pending')continue;
+        if(this.auto&&t>=event.time-EPSILON){due.push({n,event,grade:'AUTO',at:event.time});continue;}
+        if(event.input==='hold'&&t>=event.time-EPSILON){
+          const lanes=event.time<t-EPSILON?this.held:currentHeld;
+          const heldNow=(acceptedEndFlick&&event.kind==='hold-checkpoint'&&event.time>=acceptedEndFlick.judgedAt-EPSILON)||this.isSpanHeld(n,lanes);
+          due.push({n,event,grade:heldNow?'PERFECT':'MISS',at:event.time});
+        }else if((event.input==='press'||event.input==='flick')&&t>event.time+.16+EPSILON)due.push({n,event,grade:'MISS',at:event.time+.16});
       }
     }
-    events.sort((a,b)=>a.time-b.time||a.n.id-b.n.id);
-    for(const event of events){
-      if(event.tick){if(event.grade!=='MISS')event.n.holdHits++;this.record(event.n,event.grade,noteSpanAt(event.n,event.time));}
-      else {if(event.end)event.n.endJudged=true;this.finish(event.n,event.grade,event.time,event.span);}
-    }
-    for(const n of this.notes)if(n.duration&&n.type!=='flick-hold'&&n.nextTick===holdBodyTickCount(n))n.state=n.holdHits?'hit':'miss';
+    due.sort((a,b)=>a.at-b.at||a.n.id-b.n.id||a.event.id.localeCompare(b.event.id));
+    for(const item of due)this.finishEvent(item.n,item.event,item.grade,item.at);
     this.held=currentHeld;this.lastTime=t;
+    for(const n of this.notes)this.updateNoteState(n);
   }
 }
 
@@ -155,19 +198,6 @@ export class Game {
 // its own history; old movement and tiny pointer jitter cannot trigger a flick.
 export class FlickGesture {
   constructor(x,y,t){this.samples=[{x,y,t}];}
-  rest(t){
-    const last=this.samples.at(-1);
-    if(!last||t-last.t<16)return;
-    this.samples=this.samples.filter(p=>t-p.t<=140);
-    this.samples.push({x:last.x,y:last.y,t});
-  }
-  move(x,y,t){
-    this.samples=this.samples.filter(p=>t-p.t<=140);
-    const current={x,y,t};
-    const origin=this.samples.find(p=>Math.hypot(x-p.x,y-p.y)>=18);
-    this.samples.push(current);
-    if(!origin)return null;
-    this.samples=[current];
-    return {fromX:origin.x,fromY:origin.y,x,y};
-  }
+  rest(t){const last=this.samples.at(-1);if(!last||t-last.t<16)return;this.samples=this.samples.filter(p=>t-p.t<=140);this.samples.push({x:last.x,y:last.y,t});}
+  move(x,y,t){this.samples=this.samples.filter(p=>t-p.t<=140);const current={x,y,t};const origin=this.samples.find(p=>Math.hypot(x-p.x,y-p.y)>=18);this.samples.push(current);if(!origin)return null;this.samples=[current];return {fromX:origin.x,fromY:origin.y,x,y};}
 }

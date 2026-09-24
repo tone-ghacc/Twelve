@@ -1,7 +1,8 @@
-import {createDefaultChartData,validateChartData} from './engine.mjs';
+import {createDefaultChartData,validateChartData,createJudgementEvents,defaultHoldCheckpoints,isHoldNote} from './engine.mjs';
 
-const $=id=>document.getElementById(id),TYPES={tap:'タップ',flick:'フリック',hold:'ホールド','flick-hold':'フリックホールド'};
-const isHold=n=>n.type==='hold'||n.type==='flick-hold';
+const $=id=>document.getElementById(id),TYPES={tap:'タップ','critical-tap':'Criticalタップ',flick:'フリック',hold:'ホールド','flick-hold':'フリックホールド'};
+const isHold=isHoldNote;
+const noteLabel=n=>n.critical?`Critical ${TYPES[n.type]}`:TYPES[n.type];
 export const EDITOR_BASE_PX_PER_MS=.16;
 export function editorTimelineHeight(durationMs,zoom){return Math.max(840,40+durationMs*EDITOR_BASE_PX_PER_MS*zoom);}
 export function editorCanvasWindow(totalHeight,viewportHeight,scrollTop,shift=0){const total=Math.max(1,totalHeight),viewport=Math.max(1,Math.min(total,viewportHeight||1)),overscan=Math.max(320,viewport),height=Math.min(total,viewport+overscan*2),viewportTop=Math.max(0,Math.min(total-viewport,scrollTop-shift)),top=Math.max(0,Math.min(total-height,viewportTop-overscan));return{top,height,viewportTop,overscan};}
@@ -18,7 +19,7 @@ export function snapToMeasureDivision(value,timing,division,min=0,max=Number.POS
 }
 export function snapHoldDuration(startTimeMs,endTimeMs,timing,division,minDuration,maxDuration){const snappedEnd=snapToMeasureDivision(endTimeMs,timing,division,startTimeMs+minDuration,startTimeMs+maxDuration);return snappedEnd-startTimeMs;}
 export function laneSpanFromDrag(startLane,endLane){const a=Math.max(0,Math.min(11,Math.trunc(startLane))),b=Math.max(0,Math.min(11,Math.trunc(endLane)));return{lane:Math.min(a,b),width:Math.abs(a-b)+1};}
-export function chartAuditionEvents(chart){return chart.notes.flatMap(n=>[{timeMs:n.timeMs,type:n.type,lane:n.lane},...(n.type==='flick-hold'?[{timeMs:n.timeMs+n.durationMs,type:'flick-end',lane:n.endFlick.lane}]:[])]).sort((a,b)=>a.timeMs-b.timeMs);}
+export function chartAuditionEvents(chart){return chart.notes.flatMap(n=>createJudgementEvents(n).map(event=>({timeMs:event.timeMs,type:event.kind,lane:event.lane}))).sort((a,b)=>a.timeMs-b.timeMs);}
 
 export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio,getAudioInfo,onAuditionStart,onAuditionStop,onAuditionHit}){
   const canvas=$('editor-canvas'),ctx=canvas.getContext('2d'),scroll=$('timeline-scroll'),content=$('timeline-content');
@@ -38,7 +39,7 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
     if(!changes.length){const empty=document.createElement('div');empty.className='bpm-change-empty';empty.textContent='途中のBPM変更はありません';list.append(empty);return;}
     changes.forEach((change,index)=>{const row=document.createElement('div');row.className='bpm-change-row';const timeLabel=document.createElement('label'),timeText=document.createElement('span'),timeInput=document.createElement('input');timeText.textContent='時刻 (ms)';timeInput.type='number';timeInput.min='1';timeInput.max=String(durationMs()-1);timeInput.step='1';timeInput.value=String(change.timeMs);timeInput.setAttribute('aria-label',`BPM変更 ${index+1} の時刻`);timeLabel.append(timeText,timeInput);const bpmLabel=document.createElement('label'),bpmText=document.createElement('span'),bpmInput=document.createElement('input');bpmText.textContent='BPM';bpmInput.type='number';bpmInput.min='20';bpmInput.max='400';bpmInput.step='.01';bpmInput.value=String(change.bpm);bpmInput.setAttribute('aria-label',`BPM変更 ${index+1} のBPM`);bpmLabel.append(bpmText,bpmInput);const remove=document.createElement('button');remove.type='button';remove.textContent='×';remove.title=`${change.timeMs}ms のBPM変更を削除`;remove.setAttribute('aria-label',remove.title);timeInput.addEventListener('change',()=>{const next=structuredClone(chart);next.timing.bpmChanges[index].timeMs=Number(timeInput.value);if(!save(next,'BPM変更の時刻を更新しました'))renderBpmChanges();});bpmInput.addEventListener('change',()=>{const next=structuredClone(chart);next.timing.bpmChanges[index].bpm=Number(bpmInput.value);if(!save(next,'BPM変更を更新しました'))renderBpmChanges();});remove.addEventListener('click',()=>{const next=structuredClone(chart);next.timing.bpmChanges.splice(index,1);save(next,`${change.timeMs}ms のBPM変更を削除しました`);});row.append(timeLabel,bpmLabel,remove);list.append(row);});
   }
-  function syncJson(){json.value=JSON.stringify(chart,null,2);$('editor-count').textContent=`${chart.notes.length} NOTES`;$('chart-title').value=chart.metadata.title;$('chart-bpm').value=chart.timing.bpm;$('chart-duration').value=chart.metadata.durationMs;$('chart-offset').value=chart.timing.offsetMs;renderBpmChanges();syncAudioInfo();}
+  function syncJson(){const judgements=chart.notes.reduce((sum,n)=>sum+createJudgementEvents(n).length,0);json.value=JSON.stringify(chart,null,2);$('editor-count').textContent=`${chart.notes.length} NOTES · ${judgements} JUDGEMENTS`;$('chart-title').value=chart.metadata.title;$('chart-bpm').value=chart.timing.bpm;$('chart-duration').value=chart.metadata.durationMs;$('chart-offset').value=chart.timing.offsetMs;renderBpmChanges();syncAudioInfo();}
   function save(next,message='譜面を更新しました'){
     if(audition.state!=='stopped')stopAudition(false,'');try{const previousDuration=durationMs(),validated=validateChartData(next),stored=setChart(validated);chart=structuredClone(stored||validated);syncJson();renderInspector();if(durationMs()===previousDuration)draw();else resize();setStatus(message,'ok');return true;}
     catch(error){setStatus(error.message,'error');return false;}
@@ -47,6 +48,8 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
   function laneMetrics(){const laneW=(width-gutter)/12;return {laneW,x:lane=>gutter+lane*laneW,y:ms=>timelineHeight()-20-ms*pxPerMs()};}
   function point(event){const rect=canvas.getBoundingClientRect();return{x:(event.clientX-rect.left)*width/rect.width,y:renderTop+(event.clientY-rect.top)*renderHeight/rect.height};}
   const clamp=(value,min,max)=>Math.max(min,Math.min(max,value));
+  const sameNumbers=(a,b)=>a.length===b.length&&a.every((value,index)=>value===b[index]);
+  function resizedCheckpoints(note,newDuration){const current=note.checkpoints??[],automatic=defaultHoldCheckpoints(note.durationMs);return sameNumbers(current,automatic)?defaultHoldCheckpoints(newDuration):current.filter(offset=>offset<newDuration);}
   const pointTime=py=>(timelineHeight()-20-py)/pxPerMs();
   const snapTime=(value,min=0,max=durationMs())=>snapToMeasureDivision(value,chart.timing,snapDivision,min,max);
   const laneAt=px=>{const {laneW}=laneMetrics();return clamp(Math.floor((px-gutter)/laneW),0,11);};
@@ -64,10 +67,11 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
     for(const segment of segments.slice(1)){ctx.fillStyle='#b9f78d';ctx.fillRect(gutter,y(segment.startMs)-1,width-gutter,2);ctx.textAlign='left';ctx.font='600 11px Barlow Condensed, sans-serif';ctx.fillText(`${segment.bpm} BPM`,gutter+6,y(segment.startMs)-5);ctx.textAlign='right';}
     for(const n of chart.notes){if(!n.nextId)continue;const next=noteById(n.nextId);if(!next)continue;const span=n.type==='flick-hold'?n.endFlick:n;ctx.strokeStyle='#b9f78d99';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x(span.lane+span.width/2),y(n.timeMs+n.durationMs));ctx.lineTo(x(next.lane+next.width/2),y(next.timeMs));ctx.stroke();}
     for(const n of chart.notes){
-      const nx=x(n.lane)+3,nw=n.width*laneW-6,ny=y(n.timeMs),duration=n.durationMs?Math.max(10,n.durationMs*pxPerMs()):0,endY=isHold(n)?y(n.timeMs+n.durationMs):ny,purple=n.type==='flick'||n.type==='flick-hold';
+      const nx=x(n.lane)+3,nw=n.width*laneW-6,ny=y(n.timeMs),duration=n.durationMs?Math.max(10,n.durationMs*pxPerMs()):0,endY=isHold(n)?y(n.timeMs+n.durationMs):ny,purple=n.type==='flick'||n.type==='flick-hold',startColor=n.critical?'#ffd94a':purple?'#b875ff':isHold(n)?'#70dcf8':'#ff4e64';
       if(isHold(n)){ctx.fillStyle=purple?'#b875ff38':'#70dcf838';ctx.fillRect(nx,endY,nw,duration);ctx.strokeStyle=purple?'#b875ffaa':'#70dcf8aa';ctx.strokeRect(nx+.5,endY+.5,nw-1,duration-1);}
-      ctx.fillStyle=purple?'#b875ff':isHold(n)?'#70dcf8':'#ff4e64';ctx.fillRect(nx,ny-5,nw,10);
-      if(n.type==='flick'){ctx.fillStyle='#ead8ff';ctx.textAlign='center';ctx.font='bold 13px Barlow Condensed, sans-serif';ctx.fillText('‹‹  ››',nx+nw/2,ny-8);}
+      if(!isHold(n)||n.startType!=='none'){ctx.fillStyle=startColor;ctx.fillRect(nx,ny-5,nw,10);}
+      if(n.type==='flick'||n.startType==='scratch'){ctx.fillStyle=n.critical?'#fff7bd':'#ead8ff';ctx.textAlign='center';ctx.font='bold 13px Barlow Condensed, sans-serif';ctx.fillText('‹‹  ››',nx+nw/2,ny-8);}
+      if(isHold(n)){ctx.fillStyle=purple?'#dfc5ff':'#b9efff';for(const offset of n.checkpoints){const checkpointY=y(n.timeMs+offset);ctx.fillRect(nx+Math.max(2,nw*.08),checkpointY-1,Math.max(2,nw*.84),2);}}
       if(n.type==='flick-hold'){const f=n.endFlick,fx=x(f.lane)+3,fw=f.width*laneW-6,fy=endY;ctx.fillStyle='#b875ff';ctx.fillRect(fx,fy-5,fw,10);ctx.fillStyle='#ead8ff';ctx.textAlign='center';ctx.font='bold 13px Barlow Condensed, sans-serif';ctx.fillText('‹‹‹  ›››',fx+fw/2,fy-8);}
       if(n.id===selectedId){
         const top=Math.min(ny,endY),midY=(ny+endY)/2;ctx.strokeStyle='#b9f78d';ctx.lineWidth=2;ctx.strokeRect(nx-3,top-9,nw+6,Math.max(18,duration+14));ctx.fillStyle='#b9f78d';ctx.fillRect(nx-7,midY-8,8,16);ctx.fillRect(nx+nw-1,midY-8,8,16);
@@ -75,8 +79,8 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
       }
     }
     if(placing){
-      const span=laneSpanFromDrag(placing.startLane,placing.currentLane),nx=x(span.lane)+3,nw=span.width*laneW-6,ny=y(placing.timeMs),hold=isHold({type:placing.type}),duration=hold?Math.max(10,1000*pxPerMs()):0,endY=hold?y(placing.timeMs+1000):ny,purple=placing.type==='flick'||placing.type==='flick-hold';
-      ctx.save();ctx.globalAlpha=.78;if(hold){ctx.fillStyle=purple?'#b875ff38':'#70dcf838';ctx.fillRect(nx,endY,nw,duration);ctx.strokeStyle=purple?'#b875ffcc':'#70dcf8cc';ctx.strokeRect(nx+.5,endY+.5,nw-1,duration-1);}ctx.fillStyle=purple?'#b875ff':hold?'#70dcf8':'#ff4e64';ctx.fillRect(nx,ny-5,nw,10);ctx.strokeStyle='#f3ffd9';ctx.setLineDash([5,4]);ctx.strokeRect(nx-.5,ny-7,nw+1,14);ctx.setLineDash([]);if(placing.type==='flick'){ctx.fillStyle='#ead8ff';ctx.textAlign='center';ctx.font='bold 13px Barlow Condensed, sans-serif';ctx.fillText('‹‹  ››',nx+nw/2,ny-8);}if(placing.type==='flick-hold'){ctx.fillStyle='#b875ff';ctx.fillRect(nx,endY-5,nw,10);ctx.fillStyle='#ead8ff';ctx.textAlign='center';ctx.font='bold 13px Barlow Condensed, sans-serif';ctx.fillText('‹‹‹  ›››',nx+nw/2,endY-8);}ctx.restore();
+      const span=laneSpanFromDrag(placing.startLane,placing.currentLane),nx=x(span.lane)+3,nw=span.width*laneW-6,ny=y(placing.timeMs),hold=isHold({type:placing.type}),duration=hold?Math.max(10,1000*pxPerMs()):0,endY=hold?y(placing.timeMs+1000):ny,purple=placing.type==='flick'||placing.type==='flick-hold',critical=placing.type==='critical-tap';
+      ctx.save();ctx.globalAlpha=.78;if(hold){ctx.fillStyle=purple?'#b875ff38':'#70dcf838';ctx.fillRect(nx,endY,nw,duration);ctx.strokeStyle=purple?'#b875ffcc':'#70dcf8cc';ctx.strokeRect(nx+.5,endY+.5,nw-1,duration-1);}ctx.fillStyle=critical?'#ffd94a':purple?'#b875ff':hold?'#70dcf8':'#ff4e64';ctx.fillRect(nx,ny-5,nw,10);ctx.strokeStyle='#f3ffd9';ctx.setLineDash([5,4]);ctx.strokeRect(nx-.5,ny-7,nw+1,14);ctx.setLineDash([]);if(placing.type==='flick'){ctx.fillStyle='#ead8ff';ctx.textAlign='center';ctx.font='bold 13px Barlow Condensed, sans-serif';ctx.fillText('‹‹  ››',nx+nw/2,ny-8);}if(placing.type==='flick-hold'){ctx.fillStyle='#b875ff';ctx.fillRect(nx,endY-5,nw,10);ctx.fillStyle='#ead8ff';ctx.textAlign='center';ctx.font='bold 13px Barlow Condensed, sans-serif';ctx.fillText('‹‹‹  ›››',nx+nw/2,endY-8);}ctx.restore();
     }
   }
 
@@ -98,10 +102,10 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
 
   function renderInspector(){
     const n=noteById(selectedId);empty.hidden=!!n;form.hidden=!n;$('selected-id').textContent=n?n.id:'未選択';if(!n)return;
-    $('note-type').value=n.type;$('note-time').max=durationMs();$('note-time').value=n.timeMs;$('note-duration').max=Math.max(100,durationMs()-n.timeMs);$('note-duration').value=n.durationMs||1000;$('note-lane').value=n.lane+1;$('note-width').value=n.width;
-    $('flick-end-fields').hidden=n.type!=='flick-hold';$('next-field').hidden=!isHold(n);$('note-duration').disabled=!isHold(n);
+    $('note-type').value=n.type;$('note-critical').checked=!!n.critical;$('note-time').max=durationMs();$('note-time').value=n.timeMs;$('note-duration').max=Math.max(100,durationMs()-n.timeMs);$('note-duration').value=n.durationMs||1000;$('note-lane').value=n.lane+1;$('note-width').value=n.width;
+    $('hold-judgement-fields').hidden=!isHold(n);$('hold-start-type').value=n.startType??'none';$('hold-checkpoints').value=(n.checkpoints??[]).join(', ');$('flick-end-fields').hidden=n.type!=='flick-hold';$('next-field').hidden=!isHold(n);$('note-duration').disabled=!isHold(n);
     $('flick-lane').value=(n.endFlick?.lane??n.lane)+1;$('flick-width').value=n.endFlick?.width??n.width;
-    const next=$('note-next'),value=n.nextId||'';next.replaceChildren(new Option('なし',''));for(const x of chart.notes.filter(x=>x.id!==n.id&&isHold(x)))next.add(new Option(`${x.id} · ${(x.timeMs/1000).toFixed(2)}s · ${TYPES[x.type]}`,x.id));next.value=value;
+    const next=$('note-next'),value=n.nextId||'';next.replaceChildren(new Option('なし',''));for(const x of chart.notes.filter(x=>x.id!==n.id&&isHold(x)))next.add(new Option(`${x.id} · ${(x.timeMs/1000).toFixed(2)}s · ${noteLabel(x)}`,x.id));next.value=value;
   }
   function select(id){selectedId=id;renderInspector();draw();if(id)setStatus(`${id} を選択中`);}
 
@@ -120,7 +124,7 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
       const laneDelta=clamp(Math.round((px-drag.startX)/laneW),-minLane,12-maxLane),targetTime=snapTime(origin.timeMs+pointTime(py)-pointTime(drag.startY),origin.timeMs-minTime,origin.timeMs+durationMs()-maxTime),timeDelta=targetTime-origin.timeMs;
       for(const item of next.notes.filter(x=>ids.has(x.id))){item.timeMs+=timeDelta;item.lane+=laneDelta;if(item.endFlick)item.endFlick.lane+=laneDelta;}
     }else if(drag.mode==='duration'){
-      const descendants=drag.downstream,currentLatest=Math.max(origin.timeMs+origin.durationMs,...drag.members.filter(x=>descendants.includes(x.id)).map(x=>x.timeMs+(x.durationMs||0))),maxDuration=origin.durationMs+durationMs()-currentLatest,newDuration=snapHoldDuration(origin.timeMs,pointTime(py),chart.timing,snapDivision,100,maxDuration),delta=newDuration-origin.durationMs;n.durationMs=newDuration;for(const item of next.notes.filter(x=>descendants.includes(x.id)))item.timeMs+=delta;
+      const descendants=drag.downstream,currentLatest=Math.max(origin.timeMs+origin.durationMs,...drag.members.filter(x=>descendants.includes(x.id)).map(x=>x.timeMs+(x.durationMs||0))),maxDuration=origin.durationMs+durationMs()-currentLatest,newDuration=snapHoldDuration(origin.timeMs,pointTime(py),chart.timing,snapDivision,100,maxDuration),delta=newDuration-origin.durationMs;n.checkpoints=resizedCheckpoints(origin,newDuration);n.durationMs=newDuration;for(const item of next.notes.filter(x=>descendants.includes(x.id)))item.timeMs+=delta;
     }else{
       const endFlick=drag.mode.startsWith('flick-'),target=endFlick?n.endFlick:n,originalTarget=endFlick?origin.endFlick:origin,limits=drag.limits,boundary=Math.round((px-gutter)/laneW);
       if(drag.mode.endsWith('left')){const right=originalTarget.lane+originalTarget.width;target.lane=clamp(boundary,limits.minLeft,Math.min(right-1,limits.requiredLeft));target.width=right-target.lane;}
@@ -134,7 +138,7 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
   }
   function finishPlacement(cancelled=false){
     if(!placing)return;const active=placing;placing=null;if(canvas.hasPointerCapture(active.pointerId))canvas.releasePointerCapture(active.pointerId);canvas.style.cursor=tool==='select'?'default':'crosshair';if(cancelled){draw();return;}
-    const span=laneSpanFromDrag(active.startLane,active.currentLane),note={id:nextId(),type:active.type,timeMs:active.timeMs,...span};if(isHold(note))note.durationMs=1000;if(note.type==='flick-hold')note.endFlick={...span};const next=structuredClone(chart);next.notes.push(note);if(save(next,`${TYPES[note.type]}を幅${span.width}で配置しました`)){select(note.id);setStatus(`${TYPES[note.type]}を幅${span.width}で配置しました`,'ok');}
+    const span=laneSpanFromDrag(active.startLane,active.currentLane),critical=active.type==='critical-tap',note={id:nextId(),type:critical?'tap':active.type,timeMs:active.timeMs,...span,critical};if(isHold(note)){note.durationMs=1000;note.startType='normal';note.checkpoints=defaultHoldCheckpoints(note.durationMs);}if(note.type==='flick-hold')note.endFlick={...span};const next=structuredClone(chart);next.notes.push(note);const label=critical?TYPES['critical-tap']:TYPES[note.type];if(save(next,`${label}を幅${span.width}で配置しました`)){select(note.id);setStatus(`${label}を幅${span.width}で配置しました`,'ok');}
   }
   canvas.addEventListener('pointerdown',event=>{
     if(event.button!==0)return;if(audition.state!=='stopped')stopAudition(false,'編集のため再生確認を停止しました');const {x:px,y:py}=point(event);if(tool!=='select'){const lane=laneAt(px),timeMs=snapTime(pointTime(py),0,isHold({type:tool})?Math.max(0,durationMs()-1000):durationMs());placing={pointerId:event.pointerId,type:tool,timeMs,startLane:lane,currentLane:lane};canvas.setPointerCapture(event.pointerId);canvas.style.cursor='ew-resize';draw();event.preventDefault();return;}const hit=hitTest(px,py);if(!hit){select(null);return;}if(hit.id!==selectedId)select(hit.id);const n=noteById(hit.id),mode=editHandle(n,px,py)||'move',ids=connectedIds(n.id),members=chart.notes.filter(x=>ids.has(x.id)),spans=members.flatMap(x=>x.endFlick?[x,x.endFlick]:[x]);drag={pointerId:event.pointerId,id:n.id,mode,startX:px,startY:py,originChart:structuredClone(chart),connected:ids,members:structuredClone(members),spans:structuredClone(spans),downstream:downstreamIds(n),limits:widthLimits(n,mode.startsWith('flick-')),moved:false};canvas.setPointerCapture(event.pointerId);canvas.style.cursor=mode==='move'?'grabbing':cursorFor(mode);event.preventDefault();
@@ -155,15 +159,19 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
   snapInput.addEventListener('change',()=>{if(snapInput.checkValidity())return;snapInput.value=String(snapDivision);snapInput.setCustomValidity('');setStatus(`スナップは${snapError}`,'error');});
   $('editor-zoom').addEventListener('change',event=>{if(audition.state!=='stopped')stopAudition(false,'');const centerY=scroll.scrollTop+scroll.clientHeight/2,centerMs=Math.max(0,Math.min(durationMs(),(timelineHeight()-20-centerY)/pxPerMs())),nextZoom=Number(event.target.value);zoom=nextZoom;resize();requestAnimationFrame(()=>{const newCenterY=timelineHeight()-20-centerMs*pxPerMs();scroll.scrollTop=Math.max(0,newCenterY-scroll.clientHeight/2);});setStatus(`時間ズーム ${Math.round(zoom*100)}%`,'ok');});
 
+  function parseCheckpoints(value){const text=value.trim();if(!text)return[];return text.split(/[,、\s]+/).filter(Boolean).map(part=>{if(!/^\d+$/.test(part))throw new Error('中間チェックポイントは正の整数msをカンマ区切りで指定してください');return Number(part);});}
   function commitInspector(){
-    const current=noteById(selectedId);if(!current)return;const next=structuredClone(chart),n=next.notes.find(x=>x.id===selectedId),oldType=n.type;
-    n.type=$('note-type').value;n.timeMs=Number($('note-time').value);n.lane=Number($('note-lane').value)-1;n.width=Number($('note-width').value);
-    if(isHold(n)){n.durationMs=Number($('note-duration').value);n.nextId=$('note-next').value||undefined;}else{delete n.durationMs;delete n.nextId;for(const x of next.notes)if(x.nextId===n.id)delete x.nextId;}
-    if(n.type==='flick-hold')n.endFlick={lane:Number($('flick-lane').value)-1,width:Number($('flick-width').value)};else delete n.endFlick;
-    if(oldType!==n.type&&n.type==='flick-hold'&&!n.endFlick)n.endFlick={lane:n.lane,width:n.width};
+    const current=noteById(selectedId);if(!current)return;const next=structuredClone(chart),n=next.notes.find(x=>x.id===selectedId),oldType=n.type,wasHold=isHold(current);
+    n.type=$('note-type').value;n.critical=$('note-critical').checked;n.timeMs=Number($('note-time').value);n.lane=Number($('note-lane').value)-1;n.width=Number($('note-width').value);
+    if(isHold(n)){
+      const nextDuration=Number($('note-duration').value);n.durationMs=nextDuration;n.nextId=$('note-next').value||undefined;
+      n.startType=wasHold?$('hold-start-type').value:'normal';
+      try{n.checkpoints=wasHold?(nextDuration===current.durationMs?parseCheckpoints($('hold-checkpoints').value):resizedCheckpoints(current,nextDuration)):defaultHoldCheckpoints(nextDuration);}catch(error){setStatus(error.message,'error');renderInspector();return;}
+    }else{delete n.durationMs;delete n.nextId;delete n.startType;delete n.checkpoints;for(const x of next.notes)if(x.nextId===n.id)delete x.nextId;}
+    if(n.type==='flick-hold')n.endFlick=oldType==='flick-hold'?{lane:Number($('flick-lane').value)-1,width:Number($('flick-width').value)}:{lane:n.lane,width:n.width};else delete n.endFlick;
     save(next);
   }
-  for(const id of ['note-type','note-time','note-duration','note-lane','note-width','flick-lane','flick-width','note-next'])$(id).addEventListener('change',commitInspector);
+  for(const id of ['note-type','note-critical','note-time','note-duration','note-lane','note-width','hold-start-type','hold-checkpoints','flick-lane','flick-width','note-next'])$(id).addEventListener('change',commitInspector);
   $('delete-note').addEventListener('click',()=>{if(!selectedId)return;const removed=selectedId,next=structuredClone(chart);next.notes=next.notes.filter(n=>n.id!==removed);for(const n of next.notes)if(n.nextId===removed)delete n.nextId;selectedId=null;save(next,`${removed} を削除しました`);});
 
   $('chart-title').addEventListener('change',()=>{const next=structuredClone(chart);next.metadata.title=$('chart-title').value;save(next,'曲名を更新しました');});
