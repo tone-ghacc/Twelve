@@ -21,12 +21,19 @@ export function snapHoldDuration(startTimeMs,endTimeMs,timing,division,minDurati
 export function laneSpanFromDrag(startLane,endLane){const a=Math.max(0,Math.min(11,Math.trunc(startLane))),b=Math.max(0,Math.min(11,Math.trunc(endLane)));return{lane:Math.min(a,b),width:Math.abs(a-b)+1};}
 export function chartAuditionEvents(chart){return chart.notes.flatMap(n=>createJudgementEvents(n).map(event=>({timeMs:event.timeMs,type:event.kind,lane:event.lane}))).sort((a,b)=>a.timeMs-b.timeMs);}
 
+export function notesInEditorRect(notes,start,end,{laneW,x,y}){
+  const left=Math.min(start.x,end.x),right=Math.max(start.x,end.x),top=Math.min(start.y,end.y),bottom=Math.max(start.y,end.y);
+  const intersects=(l,r,t,b)=>left<=r&&right>=l&&top<=b&&bottom>=t;
+  return notes.filter(n=>{const ny=y(n.timeMs),ey=y(n.timeMs+(n.durationMs||0));return intersects(x(n.lane),x(n.lane)+n.width*laneW,Math.min(ny,ey)-5,Math.max(ny,ey)+5)||(n.endFlick&&intersects(x(n.endFlick.lane),x(n.endFlick.lane+n.endFlick.width),ey-12,ey+5));}).map(n=>n.id);
+}
+
 export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio,getAudioInfo,onAuditionStart,onAuditionStop,onAuditionHit}){
   const canvas=$('editor-canvas'),ctx=canvas.getContext('2d'),scroll=$('timeline-scroll'),content=$('timeline-content');
   const form=$('note-form'),empty=$('inspector-empty'),json=$('chart-json'),status=$('editor-status');
   const viewport=$('timeline-viewport'),playToggle=$('editor-play-toggle'),playStop=$('editor-play-stop'),playTime=$('editor-play-time');
   let chart=structuredClone(getChart()),selectedId=null,tool='select',snapDivision=16,zoom=1,width=0,ratio=1,renderTop=0,renderHeight=0,scrollFrame=0,initialScrollPending=true,drag=null,placing=null,audition={state:'stopped',timeMs:0,originTimeMs:0,startedAt:0,nextEvent:0,events:[],frame:0};
   const gutter=38,durationMs=()=>chart.metadata.durationMs,timelineHeight=()=>editorTimelineHeight(durationMs(),zoom),pxPerMs=()=>(timelineHeight()-40)/durationMs();
+  let selectedIds=new Set(),marquee=null,marqueeFrame=0;
 
   function noteById(id){return chart.notes.find(n=>n.id===id);}
   function setStatus(message,kind=''){status.textContent=message;status.className=`editor-status ${kind}`;}
@@ -73,11 +80,12 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
       if(n.type==='flick'||n.startType==='scratch'){ctx.fillStyle=n.critical?'#fff7bd':'#ead8ff';ctx.textAlign='center';ctx.font='bold 13px Barlow Condensed, sans-serif';ctx.fillText('‹‹  ››',nx+nw/2,ny-8);}
       if(isHold(n)){ctx.fillStyle=purple?'#dfc5ff':'#b9efff';for(const offset of n.checkpoints){const checkpointY=y(n.timeMs+offset);ctx.fillRect(nx+Math.max(2,nw*.08),checkpointY-1,Math.max(2,nw*.84),2);}}
       if(n.type==='flick-hold'){const f=n.endFlick,fx=x(f.lane)+3,fw=f.width*laneW-6,fy=endY;ctx.fillStyle='#b875ff';ctx.fillRect(fx,fy-5,fw,10);ctx.fillStyle='#ead8ff';ctx.textAlign='center';ctx.font='bold 13px Barlow Condensed, sans-serif';ctx.fillText('‹‹‹  ›››',fx+fw/2,fy-8);}
-      if(n.id===selectedId){
-        const top=Math.min(ny,endY),midY=(ny+endY)/2;ctx.strokeStyle='#b9f78d';ctx.lineWidth=2;ctx.strokeRect(nx-3,top-9,nw+6,Math.max(18,duration+14));ctx.fillStyle='#b9f78d';ctx.fillRect(nx-7,midY-8,8,16);ctx.fillRect(nx+nw-1,midY-8,8,16);
-        if(isHold(n)){const endSpan=n.type==='flick-hold'?n.endFlick:n,ex=x(endSpan.lane)+3,ew=endSpan.width*laneW-6;ctx.fillRect(ex+ew/2-8,endY-4,16,8);if(n.type==='flick-hold'){ctx.fillStyle='#ead8ff';ctx.fillRect(ex-7,endY-8,8,16);ctx.fillRect(ex+ew-1,endY-8,8,16);}}
+      if(selectedIds.has(n.id)){
+        const top=Math.min(ny,endY),midY=(ny+endY)/2;ctx.strokeStyle='#b9f78d';ctx.lineWidth=2;ctx.strokeRect(nx-3,top-9,nw+6,Math.max(18,duration+14));ctx.fillStyle='#b9f78d';if(selectedIds.size===1){ctx.fillRect(nx-7,midY-8,8,16);ctx.fillRect(nx+nw-1,midY-8,8,16);}
+        if(isHold(n)){const endSpan=n.type==='flick-hold'?n.endFlick:n,ex=x(endSpan.lane)+3,ew=endSpan.width*laneW-6;ctx.strokeRect(ex-3,endY-9,ew+6,18);if(selectedIds.size===1){ctx.fillRect(ex+ew/2-8,endY-4,16,8);if(n.type==='flick-hold'){ctx.fillStyle='#ead8ff';ctx.fillRect(ex-7,endY-8,8,16);ctx.fillRect(ex+ew-1,endY-8,8,16);}}}
       }
     }
+    if(marquee){const left=Math.min(marquee.start.x,marquee.end.x),top=Math.min(marquee.start.y,marquee.end.y),w=Math.abs(marquee.end.x-marquee.start.x),h=Math.abs(marquee.end.y-marquee.start.y);ctx.save();ctx.fillStyle='#b9f78d22';ctx.strokeStyle='#b9f78d';ctx.lineWidth=1.5;ctx.setLineDash([6,4]);ctx.fillRect(left,top,w,h);ctx.strokeRect(left,top,w,h);ctx.restore();}
     if(placing){
       const span=laneSpanFromDrag(placing.startLane,placing.currentLane),nx=x(span.lane)+3,nw=span.width*laneW-6,ny=y(placing.timeMs),hold=isHold({type:placing.type}),duration=hold?Math.max(10,1000*pxPerMs()):0,endY=hold?y(placing.timeMs+1000):ny,purple=placing.type==='flick'||placing.type==='flick-hold',critical=placing.type==='critical-tap';
       ctx.save();ctx.globalAlpha=.78;if(hold){ctx.fillStyle=purple?'#b875ff38':'#70dcf838';ctx.fillRect(nx,endY,nw,duration);ctx.strokeStyle=purple?'#b875ffcc':'#70dcf8cc';ctx.strokeRect(nx+.5,endY+.5,nw-1,duration-1);}ctx.fillStyle=critical?'#ffd94a':purple?'#b875ff':hold?'#70dcf8':'#ff4e64';ctx.fillRect(nx,ny-5,nw,10);ctx.strokeStyle='#f3ffd9';ctx.setLineDash([5,4]);ctx.strokeRect(nx-.5,ny-7,nw+1,14);ctx.setLineDash([]);if(placing.type==='flick'){ctx.fillStyle='#ead8ff';ctx.textAlign='center';ctx.font='bold 13px Barlow Condensed, sans-serif';ctx.fillText('‹‹  ››',nx+nw/2,ny-8);}if(placing.type==='flick-hold'){ctx.fillStyle='#b875ff';ctx.fillRect(nx,endY-5,nw,10);ctx.fillStyle='#ead8ff';ctx.textAlign='center';ctx.font='bold 13px Barlow Condensed, sans-serif';ctx.fillText('‹‹‹  ›››',nx+nw/2,endY-8);}ctx.restore();
@@ -101,13 +109,26 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
   playToggle.addEventListener('click',startAudition);playStop.addEventListener('click',()=>stopAudition(false));document.addEventListener('visibilitychange',()=>{if(document.hidden)pauseAudition();});
 
   function renderInspector(){
-    const n=noteById(selectedId);empty.hidden=!!n;form.hidden=!n;$('selected-id').textContent=n?n.id:'未選択';if(!n)return;
+    selectedIds=new Set([...selectedIds].filter(id=>noteById(id)));selectedId=selectedIds.size===1?[...selectedIds][0]:null;
+    const multi=selectedIds.size>1,n=noteById(selectedId);empty.hidden=!!n||multi;form.hidden=!n;$('multi-selection').hidden=!multi;$('selection-count').textContent=`${selectedIds.size}個のノーツを選択中`;$('selected-id').textContent=multi?`${selectedIds.size}個選択`:n?n.id:'未選択';if(!n)return;
     $('note-type').value=n.type;$('note-critical').checked=!!n.critical;$('note-critical').disabled=isHold(n)&&n.startType==='scratch';$('note-time').max=durationMs();$('note-time').value=n.timeMs;$('note-duration').max=Math.max(100,durationMs()-n.timeMs);$('note-duration').value=n.durationMs||1000;$('note-lane').value=n.lane+1;$('note-width').value=n.width;
     $('hold-judgement-fields').hidden=!isHold(n);$('hold-start-type').value=n.startType??'none';$('hold-checkpoints').value=(n.checkpoints??[]).join(', ');$('flick-end-fields').hidden=n.type!=='flick-hold';$('next-field').hidden=!isHold(n);$('note-duration').disabled=!isHold(n);
     $('flick-lane').value=(n.endFlick?.lane??n.lane)+1;$('flick-width').value=n.endFlick?.width??n.width;
     const next=$('note-next'),value=n.nextId||'';next.replaceChildren(new Option('なし',''));for(const x of chart.notes.filter(x=>x.id!==n.id&&isHold(x)))next.add(new Option(`${x.id} · ${(x.timeMs/1000).toFixed(2)}s · ${noteLabel(x)}`,x.id));next.value=value;
   }
-  function select(id){selectedId=id;renderInspector();draw();if(id)setStatus(`${id} を選択中`);}
+  function selectionStatus(){setStatus(selectedIds.size>1?`${selectedIds.size}個のノーツを選択中 · ドラッグで移動 / Deleteで削除`:selectedId?`${selectedId} を選択中`:'空白をドラッグして範囲選択できます');}
+  function select(id){selectedIds=new Set(id?[id]:[]);renderInspector();draw();selectionStatus();}
+  function updateMarquee(event){
+    if(!marquee)return;marquee.client={clientX:event.clientX,clientY:event.clientY};marquee.end=point(event);
+    marquee.moved=marquee.moved||Math.hypot(marquee.end.x-marquee.start.x,marquee.end.y-marquee.start.y)>3;
+    selectedIds=new Set(marquee.base);if(marquee.moved)for(const id of notesInEditorRect(chart.notes,marquee.start,marquee.end,laneMetrics()))selectedIds.add(id);
+    renderInspector();draw();selectionStatus();
+  }
+  function scrollMarquee(){
+    if(!marquee)return;const rect=scroll.getBoundingClientRect(),py=marquee.client.clientY,edge=32,speed=py<rect.top+edge?-Math.min(16,(rect.top+edge-py)/2):py>rect.bottom-edge?Math.min(16,(py-rect.bottom+edge)/2):0;
+    if(speed){scroll.scrollTop+=speed;updateCanvasWindow();updateMarquee(marquee.client);}marqueeFrame=requestAnimationFrame(scrollMarquee);
+  }
+  function finishMarquee(cancelled=false){if(!marquee)return;const active=marquee;marquee=null;cancelAnimationFrame(marqueeFrame);marqueeFrame=0;if(cancelled)selectedIds=active.previous;if(canvas.hasPointerCapture(active.pointerId))canvas.releasePointerCapture(active.pointerId);renderInspector();draw();selectionStatus();}
 
   function hitTest(px,py){const {laneW,x,y}=laneMetrics();return [...chart.notes].reverse().find(n=>{const nx=x(n.lane),nw=n.width*laneW,ny=y(n.timeMs),endY=isHold(n)?y(n.timeMs+n.durationMs):ny,top=Math.min(ny,endY),bottom=Math.max(ny,endY);const body=px>=nx&&px<=nx+nw&&py>=top-10&&py<=bottom+10;if(body)return true;if(n.type==='flick-hold'){const f=n.endFlick,fx=x(f.lane),fw=f.width*laneW;return px>=fx&&px<=fx+fw&&Math.abs(py-endY)<=12;}return false;});}
   function editHandle(n,px,py){
@@ -134,20 +155,26 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
   }
   function finishDrag(cancelled=false){
     if(!drag)return;const active=drag,changed=active.moved&&!cancelled,next=structuredClone(chart);drag=null;canvas.style.cursor='default';if(canvas.hasPointerCapture(active.pointerId))canvas.releasePointerCapture(active.pointerId);
-    if(!changed){chart=active.originChart;draw();return;}chart=active.originChart;if(!save(next,'ドラッグ編集を反映しました')){chart=active.originChart;syncJson();renderInspector();draw();}
+    if(!changed){chart=active.originChart;renderInspector();draw();return;}chart=active.originChart;if(!save(next,'ドラッグ編集を反映しました')){chart=active.originChart;syncJson();renderInspector();draw();}
   }
   function finishPlacement(cancelled=false){
     if(!placing)return;const active=placing;placing=null;if(canvas.hasPointerCapture(active.pointerId))canvas.releasePointerCapture(active.pointerId);canvas.style.cursor=tool==='select'?'default':'crosshair';if(cancelled){draw();return;}
     const span=laneSpanFromDrag(active.startLane,active.currentLane),critical=active.type==='critical-tap',note={id:nextId(),type:critical?'tap':active.type,timeMs:active.timeMs,...span,critical};if(isHold(note)){note.durationMs=1000;note.startType='normal';note.checkpoints=defaultHoldCheckpoints(note.durationMs);}if(note.type==='flick-hold')note.endFlick={...span};const next=structuredClone(chart);next.notes.push(note);const label=critical?TYPES['critical-tap']:TYPES[note.type];if(save(next,`${label}を幅${span.width}で配置しました`)){select(note.id);setStatus(`${label}を幅${span.width}で配置しました`,'ok');}
   }
   canvas.addEventListener('pointerdown',event=>{
-    if(event.button!==0)return;if(audition.state!=='stopped')stopAudition(false,'編集のため再生確認を停止しました');const {x:px,y:py}=point(event);if(tool!=='select'){const lane=laneAt(px),timeMs=snapTime(pointTime(py),0,isHold({type:tool})?Math.max(0,durationMs()-1000):durationMs());placing={pointerId:event.pointerId,type:tool,timeMs,startLane:lane,currentLane:lane};canvas.setPointerCapture(event.pointerId);canvas.style.cursor='ew-resize';draw();event.preventDefault();return;}const hit=hitTest(px,py);if(!hit){select(null);return;}if(hit.id!==selectedId)select(hit.id);const n=noteById(hit.id),mode=editHandle(n,px,py)||'move',ids=connectedIds(n.id),members=chart.notes.filter(x=>ids.has(x.id)),spans=members.flatMap(x=>x.endFlick?[x,x.endFlick]:[x]);drag={pointerId:event.pointerId,id:n.id,mode,startX:px,startY:py,originChart:structuredClone(chart),connected:ids,members:structuredClone(members),spans:structuredClone(spans),downstream:downstreamIds(n),limits:widthLimits(n,mode.startsWith('flick-')),moved:false};canvas.setPointerCapture(event.pointerId);canvas.style.cursor=mode==='move'?'grabbing':cursorFor(mode);event.preventDefault();
+    if(event.button!==0||drag||placing||marquee)return;if(audition.state!=='stopped')stopAudition(false,'編集のため再生確認を停止しました');const {x:px,y:py}=point(event);if(tool!=='select'){const lane=laneAt(px),timeMs=snapTime(pointTime(py),0,isHold({type:tool})?Math.max(0,durationMs()-1000):durationMs());placing={pointerId:event.pointerId,type:tool,timeMs,startLane:lane,currentLane:lane};canvas.setPointerCapture(event.pointerId);canvas.style.cursor='ew-resize';draw();event.preventDefault();return;}
+    const hit=hitTest(px,py);
+    if(!hit){marquee={pointerId:event.pointerId,start:{x:px,y:py},end:{x:px,y:py},previous:new Set(selectedIds),base:event.shiftKey?new Set(selectedIds):new Set(),client:{clientX:event.clientX,clientY:event.clientY},moved:false};canvas.setPointerCapture(event.pointerId);updateMarquee(event);marqueeFrame=requestAnimationFrame(scrollMarquee);event.preventDefault();return;}
+    if(event.shiftKey){if(selectedIds.has(hit.id))selectedIds.delete(hit.id);else selectedIds.add(hit.id);renderInspector();draw();selectionStatus();event.preventDefault();return;}
+    if(!selectedIds.has(hit.id))select(hit.id);
+    const n=noteById(hit.id),mode=selectedIds.size>1?'move':editHandle(n,px,py)||'move',ids=new Set([...selectedIds].flatMap(id=>[...connectedIds(id)])),members=chart.notes.filter(x=>ids.has(x.id)),spans=members.flatMap(x=>x.endFlick?[x,x.endFlick]:[x]);drag={pointerId:event.pointerId,id:n.id,mode,startX:px,startY:py,originChart:structuredClone(chart),connected:ids,members:structuredClone(members),spans:structuredClone(spans),downstream:downstreamIds(n),limits:widthLimits(n,mode.startsWith('flick-')),moved:false};canvas.setPointerCapture(event.pointerId);canvas.style.cursor=mode==='move'?'grabbing':cursorFor(mode);event.preventDefault();
   });
-  canvas.addEventListener('pointermove',event=>{const {x:px,y:py}=point(event);if(placing&&event.pointerId===placing.pointerId){placing.currentLane=laneAt(px);const span=laneSpanFromDrag(placing.startLane,placing.currentLane);setStatus(`${TYPES[placing.type]} · レーン ${span.lane+1}〜${span.lane+span.width} · 幅${span.width}`);draw();event.preventDefault();return;}if(drag&&event.pointerId===drag.pointerId){previewDrag(px,py);event.preventDefault();return;}const n=noteById(selectedId);canvas.style.cursor=tool==='select'&&n?cursorFor(editHandle(n,px,py)):'crosshair';});
-  canvas.addEventListener('pointerup',event=>{if(placing&&event.pointerId===placing.pointerId){placing.currentLane=laneAt(point(event).x);finishPlacement();return;}if(drag&&event.pointerId===drag.pointerId)finishDrag();});
-  canvas.addEventListener('pointercancel',event=>{if(placing&&event.pointerId===placing.pointerId){finishPlacement(true);return;}if(drag&&event.pointerId===drag.pointerId)finishDrag(true);});
+  canvas.addEventListener('pointermove',event=>{if(marquee&&event.pointerId===marquee.pointerId){updateMarquee(event);event.preventDefault();return;}const {x:px,y:py}=point(event);if(placing&&event.pointerId===placing.pointerId){placing.currentLane=laneAt(px);const span=laneSpanFromDrag(placing.startLane,placing.currentLane);setStatus(`${TYPES[placing.type]} · レーン ${span.lane+1}〜${span.lane+span.width} · 幅${span.width}`);draw();event.preventDefault();return;}if(drag&&event.pointerId===drag.pointerId){previewDrag(px,py);event.preventDefault();return;}const n=noteById(selectedId);canvas.style.cursor=selectedIds.size>1&&selectedIds.has(hitTest(px,py)?.id)?'grab':tool==='select'&&n?cursorFor(editHandle(n,px,py)):'crosshair';});
+  canvas.addEventListener('pointerup',event=>{if(marquee&&event.pointerId===marquee.pointerId){updateMarquee(event);finishMarquee();return;}if(placing&&event.pointerId===placing.pointerId){placing.currentLane=laneAt(point(event).x);finishPlacement();return;}if(drag&&event.pointerId===drag.pointerId)finishDrag();});
+  function cancelPointer(event){if(marquee&&event.pointerId===marquee.pointerId)finishMarquee(true);if(placing&&event.pointerId===placing.pointerId)finishPlacement(true);if(drag&&event.pointerId===drag.pointerId)finishDrag(true);}
+  canvas.addEventListener('pointercancel',cancelPointer);canvas.addEventListener('lostpointercapture',cancelPointer);
 
-  for(const button of document.querySelectorAll('.tool'))button.addEventListener('click',()=>{tool=button.dataset.tool;document.querySelectorAll('.tool').forEach(x=>x.classList.toggle('active',x===button));canvas.style.cursor=tool==='select'?'default':'crosshair';setStatus(tool==='select'?'ノーツ本体・端・ホールド終端をドラッグできます':'クリックで幅1、横ドラッグで任意の幅を配置');});
+  for(const button of document.querySelectorAll('.tool'))button.addEventListener('click',()=>{tool=button.dataset.tool;document.querySelectorAll('.tool').forEach(x=>x.classList.toggle('active',x===button));canvas.style.cursor=tool==='select'?'default':'crosshair';setStatus(tool==='select'?'空白をドラッグで範囲選択。Shiftで追加・解除。選択ノーツはドラッグで移動':'クリックで幅1、横ドラッグで任意の幅を配置');});
   const snapInput=$('editor-snap'),snapError='1以上の整数を入力してください';
   const snapOptions=$('snap-options'),showSnapOptions=()=>{snapOptions.hidden=false;snapInput.setAttribute('aria-expanded','true');},hideSnapOptions=()=>{snapOptions.hidden=true;snapInput.setAttribute('aria-expanded','false');};
   snapInput.addEventListener('focus',showSnapOptions);snapInput.addEventListener('click',showSnapOptions);
@@ -172,24 +199,25 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
     save(next);
   }
   for(const id of ['note-type','note-critical','note-time','note-duration','note-lane','note-width','hold-start-type','hold-checkpoints','flick-lane','flick-width','note-next'])$(id).addEventListener('change',commitInspector);
-  $('delete-note').addEventListener('click',()=>{if(!selectedId)return;const removed=selectedId,next=structuredClone(chart);next.notes=next.notes.filter(n=>n.id!==removed);for(const n of next.notes)if(n.nextId===removed)delete n.nextId;selectedId=null;save(next,`${removed} を削除しました`);});
+  function deleteSelection(){if(!selectedIds.size)return;const removed=new Set(selectedIds),next=structuredClone(chart);next.notes=next.notes.filter(n=>!removed.has(n.id));for(const n of next.notes)if(removed.has(n.nextId))delete n.nextId;if(save(next,`${removed.size}個のノーツを削除しました`)){select(null);setStatus(`${removed.size}個のノーツを削除しました`,'ok');}}
+  $('delete-note').addEventListener('click',deleteSelection);$('delete-selection').addEventListener('click',deleteSelection);$('clear-selection').addEventListener('click',()=>select(null));
 
   $('chart-title').addEventListener('change',()=>{const next=structuredClone(chart);next.metadata.title=$('chart-title').value;save(next,'曲名を更新しました');});
   $('chart-bpm').addEventListener('change',()=>{const next=structuredClone(chart);next.timing.bpm=Number($('chart-bpm').value);save(next,'基準BPMを更新しました');});
   $('add-bpm-change').addEventListener('click',()=>{const next=structuredClone(chart),used=new Set(next.timing.bpmChanges.map(change=>change.timeMs)),selected=noteById(selectedId),centerTime=pointTime(scroll.scrollTop+scroll.clientHeight/2);let timeMs=snapTime(selected?.timeMs??centerTime,1,durationMs()-1);while(used.has(timeMs)&&timeMs<durationMs()-1)timeMs++;while(used.has(timeMs)&&timeMs>1)timeMs--;if(used.has(timeMs)){setStatus('追加できる時刻がありません','error');return;}next.timing.bpmChanges.push({timeMs,bpm:bpmAtTime(chart.timing,timeMs)});save(next,`${timeMs}ms にBPM変更を追加しました`);});
   $('chart-duration').addEventListener('change',()=>{const next=structuredClone(chart);next.metadata.durationMs=Number($('chart-duration').value);if(!save(next,'譜面の長さを更新しました'))syncJson();});
   $('chart-offset').addEventListener('change',()=>{const next=structuredClone(chart);next.timing.offsetMs=Number($('chart-offset').value);if(!save(next,'音源オフセットを更新しました'))syncJson();});
-  $('apply-json').addEventListener('click',()=>{try{const next=JSON.parse(json.value);selectedId=null;save(next,'JSONを譜面へ反映しました');}catch(error){setStatus(`JSONを読み込めません: ${error.message}`,'error');}});
+  $('apply-json').addEventListener('click',()=>{try{const next=JSON.parse(json.value);selectedId=null;selectedIds.clear();save(next,'JSONを譜面へ反映しました');}catch(error){setStatus(`JSONを読み込めません: ${error.message}`,'error');}});
   $('import-chart-file').addEventListener('click',()=>$('chart-file').click());
-  $('chart-file').addEventListener('change',async event=>{const file=event.target.files?.[0];event.target.value='';if(!file)return;try{const next=JSON.parse(await file.text());selectedId=null;if(save(next,`${file.name} を読み込みました`))resize();}catch(error){setStatus(`JSONを読み込めません: ${error.message}`,'error');}});
+  $('chart-file').addEventListener('change',async event=>{const file=event.target.files?.[0];event.target.value='';if(!file)return;try{const next=JSON.parse(await file.text());selectedId=null;selectedIds.clear();if(save(next,`${file.name} を読み込みました`))resize();}catch(error){setStatus(`JSONを読み込めません: ${error.message}`,'error');}});
   $('import-audio-file').addEventListener('click',()=>$('audio-file').click());
   $('audio-file').addEventListener('change',async event=>{const file=event.target.files?.[0];event.target.value='';if(!file)return;stopAudition(true,'');setStatus(`${file.name} を解析中…`);try{await onAudioFile(file);chart=structuredClone(getChart());syncJson();renderInspector();resize();setStatus(`${file.name} を音源として読み込みました`,'ok');}catch(error){setStatus(`音源を読み込めません: ${error.message}`,'error');}});
   $('clear-audio-file').addEventListener('click',()=>{stopAudition(true,'');onClearAudio();syncAudioInfo();setStatus('内蔵シンセ音源へ戻しました','ok');});
   $('copy-json').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(json.value);setStatus('JSONをコピーしました','ok');}catch{json.focus();json.select();setStatus('JSONを選択しました。コピーしてください');}});
   $('download-json').addEventListener('click',()=>{const url=URL.createObjectURL(new Blob([json.value],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download='twelve-chart.json';a.click();URL.revokeObjectURL(url);setStatus('JSONをダウンロードしました','ok');});
-  $('editor-reset').addEventListener('click',()=>{selectedId=null;save(createDefaultChartData(),'サンプル譜面へ戻しました');requestAnimationFrame(()=>{scroll.scrollTop=scroll.scrollHeight;});});
+  $('editor-reset').addEventListener('click',()=>{selectedId=null;selectedIds.clear();save(createDefaultChartData(),'サンプル譜面へ戻しました');requestAnimationFrame(()=>{scroll.scrollTop=scroll.scrollHeight;});});
   $('editor-preview').addEventListener('click',()=>{stopAudition(true,'');onPreview(chart);});
-  window.addEventListener('keydown',event=>{if($('editor-workspace').hidden||event.key!=='Delete'||event.target.matches('input,select,textarea'))return;$('delete-note').click();});
+  window.addEventListener('keydown',event=>{if($('editor-workspace').hidden||event.target.matches('input,select,textarea'))return;if(event.key==='Escape'){if(marquee)finishMarquee(true);else if(drag)finishDrag(true);else if(placing)finishPlacement(true);else select(null);}if(event.key==='Delete'&&!marquee&&!drag&&!placing){event.preventDefault();deleteSelection();}});
 
-  syncJson();renderInspector();resize();syncAuditionUi();return{stop(){stopAudition(true,'');},refresh(){stopAudition(true,'');chart=structuredClone(getChart());selectedId=null;syncJson();renderInspector();resize();if(initialScrollPending){initialScrollPending=false;requestAnimationFrame(()=>{scroll.scrollTop=Math.max(0,scroll.scrollHeight-scroll.clientHeight);});}}};
+  syncJson();renderInspector();resize();syncAuditionUi();return{stop(){stopAudition(true,'');},refresh(){stopAudition(true,'');chart=structuredClone(getChart());selectedId=null;selectedIds.clear();syncJson();renderInspector();resize();if(initialScrollPending){initialScrollPending=false;requestAnimationFrame(()=>{scroll.scrollTop=Math.max(0,scroll.scrollHeight-scroll.clientHeight);});}}};
 }

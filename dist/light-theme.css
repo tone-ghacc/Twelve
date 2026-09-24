@@ -41,7 +41,7 @@ input[role=switch]{background:#becbd8}input[role=switch]:checked{background:var(
 .snap-options{background:#fff;border-color:#bdd5e8;box-shadow:0 12px 28px #24456320}.snap-options button{background:#f4faff;color:#203047;border-color:#ccddeb}.snap-options button:hover,.snap-options button:focus-visible{background:#e0f3ff;border-color:var(--blue);color:#00618d}
 .editor-playback{background:#f5faff;border-color:#c4d3e3}.editor-playback>span{color:#596c80}
 .timeline-head{background:#e9f3fc;color:#52677d;border-color:#c4d3e3}
-.editor-status{background:#fff;color:#52677d}.editor-status.error{color:#b9224e}.editor-status.ok{color:#006c9f}
+.editor-status{background:#0c131c;color:#9eabb9;border-color:#26303e}.editor-status.error{color:#ff8291}.editor-status.ok{color:#b9f78d}
 .play-section:not(.theater-mode) .playback-menu-toggle{background:#fff;color:#435870;border-color:#c4d3e3}
 .play-section:not(.theater-mode) .playback-menu-toggle:hover,.play-section:not(.theater-mode) .playback-menu-toggle[aria-expanded=true]{background:#e9f7ff;color:#006c9f;border-color:var(--blue)}
 .play-section:not(.theater-mode) .playback-menu-panel{background:#fffffff5;border-color:#c4d3e3;box-shadow:0 16px 36px #24456322}
@@ -57,3 +57,15 @@ input[role=switch]{background:#becbd8}input[role=switch]:checked{background:var(
 @media(max-width:1000px){.track-card{padding:14px}.track-meta>div{padding-left:8px}.speed-setting{flex-direction:column}.setting-stepper{width:100%;grid-template-columns:32px minmax(44px,1fr) 32px}.setting-stepper input{width:100%}}
 @media(max-width:920px){.editor-grid{display:flex;flex-direction:column}.tool-palette{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:5px;border-right:0;border-bottom:1px solid var(--line);padding:10px}.tool-palette h2,.tool-palette p{display:none}.tool{height:64px;flex-direction:column;justify-content:center;gap:5px;margin:0;padding:4px;font-size:12px}.inspector{border-left:0;border-top:1px solid var(--line)}}
 @media(max-width:520px){.tool-palette{grid-template-columns:repeat(3,minmax(0,1fr))}.editor-meta{grid-template-columns:repeat(2,minmax(0,1fr))}.editor-heading{gap:14px}.editor-actions button{font-size:13px}}
+
+/* Keep the timeline and inspector independent of each other's content height. */
+.editor-grid{--timeline-height:620px;--pane-height:calc(var(--timeline-height) + 126px);align-items:start;min-height:0}
+.timeline-panel{min-width:0;height:var(--pane-height);display:flex;flex-direction:column;overflow:hidden}
+.editor-playback{flex:0 0 44px}.timeline-head{flex:0 0 38px}
+.timeline-viewport{flex:1;min-height:0}.timeline-scroll{height:100%;min-height:0}
+.editor-status{flex:0 0 44px;height:44px;line-height:1.4;overflow:auto;overflow-wrap:anywhere}
+.inspector{height:var(--pane-height);min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+.inspector-head{align-items:flex-start}.inspector-head h2{flex-shrink:0}.inspector-head span{min-width:0;overflow-wrap:anywhere;text-align:right}
+.inspector fieldset,.inspector label,.inspector .field-pair{min-width:0}.inspector .field-pair{grid-template-columns:repeat(2,minmax(0,1fr))}
+#multi-selection p{line-height:1.7;color:#596c80}#multi-selection #selection-count{color:#203047;font-weight:600}#multi-selection button{width:100%;margin-top:10px}
+@media(max-width:920px){.editor-grid{--timeline-height:55vh}.timeline-panel{width:100%}.inspector{height:auto;max-height:65vh;width:100%}.tool-palette{width:100%}}
