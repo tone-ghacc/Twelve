@@ -7,6 +7,7 @@ import {
   validateChartData
 } from '../dist/engine.mjs';
 import {chartAuditionEvents} from '../dist/editor.js';
+import {createPerspective,getNoteSpawnTimeMs,getNoteVisibleTimeMs,NOTE_START_POSITIONS,validateNoteSpeed,validateNoteStartPosition} from '../dist/projection.mjs';
 
 const baseChart=note=>({
   schemaVersion:1,
@@ -90,4 +91,21 @@ const baseChart=note=>({
 assert.deepEqual(defaultHoldCheckpoints(450),[100,200,300,400]);
 assert.deepEqual(chartAuditionEvents(validateChartData(baseChart({id:'preview',type:'hold',timeMs:1000,durationMs:300,lane:0,width:1,startType:'none',checkpoints:[150]}))).map(event=>[event.timeMs,event.type]),[[1150,'hold-checkpoint'],[1300,'hold-end']]);
 assert.doesNotThrow(()=>validateChartData(createDefaultChartData()));
+
+assert.equal(getNoteVisibleTimeMs(10,0),740);
+assert.equal(getNoteVisibleTimeMs(20,0),370);
+assert.equal(getNoteVisibleTimeMs(10,50),370);
+assert.equal(getNoteVisibleTimeMs(25,0),296);
+assert.equal(getNoteVisibleTimeMs(10,100),0);
+assert.equal(getNoteSpawnTimeMs(2000,10,50),1630);
+assert.throws(()=>validateNoteSpeed(.9),RangeError);
+assert.throws(()=>validateNoteSpeed(25.1),RangeError);
+assert.throws(()=>validateNoteSpeed(10.15),RangeError);
+assert.throws(()=>validateNoteStartPosition(52),RangeError);
+for(const position of NOTE_START_POSITIONS.slice(0,-1))assert.ok(getNoteVisibleTimeMs(10,position)>=getNoteVisibleTimeMs(10,position+5));
+for(let speed=10;speed<25;speed+=.1)assert.ok(getNoteVisibleTimeMs(speed,0)>=getNoteVisibleTimeMs(Math.round((speed+.1)*10)/10,0));
+const fullStart=createPerspective(1200,700,{noteSpeed:20,noteStartPosition:0}),nearStart=createPerspective(1200,700,{noteSpeed:10,noteStartPosition:50});
+assert.equal(fullStart.visibleTimeMs,nearStart.visibleTimeMs);
+assert.equal(fullStart.visibleY,0);
+assert.ok(nearStart.visibleY>0,'the same visible time can begin at a nearer lane position');
 console.log('engine tests passed');

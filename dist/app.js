@@ -1,11 +1,13 @@
 import { Game, FlickGesture, KEYS, LABELS, noteSpanAt, flickSpan, createDefaultChartData, validateChartData } from './engine.mjs';
 import {initEditor} from './editor.js';
-import {createPerspective,perspectiveMetrics} from './projection.mjs';
+import {createPerspective,perspectiveMetrics,getNoteVisibleTimeMs} from './projection.mjs';
 const $=id=>document.getElementById(id),canvas=$('game'),ctx=canvas.getContext('2d');
 const playbackSection=document.querySelector('.play-section');
 const judgementColors={GREAT:'#ffd65a',GOOD:'#71dd83',BAD:'#673480',MISS:'#969faa',AUTO:'#70dcf8'};
 let game,phase='ready',elapsed=0,epoch=0,audio,master,trackGain,scheduledStep=0,frameTime=0,judgeUntil=0,externalTrack=null,externalSource=null;
 let chartData=createDefaultChartData();try{const saved=localStorage.getItem('twelve-chart-v1');if(saved)chartData=validateChartData(JSON.parse(saved));}catch{localStorage.removeItem('twelve-chart-v1');}
+const PLAY_SETTINGS_KEY='twelve-play-settings-v1',defaultPlaySettings={noteSpeed:10,noteStartPosition:50};
+let playSettings={...defaultPlaySettings};try{const saved=JSON.parse(localStorage.getItem(PLAY_SETTINGS_KEY)),noteSpeed=Math.round(Number(saved?.noteSpeed)*10)/10,noteStartPosition=Math.round(Number(saved?.noteStartPosition)/5)*5;if(noteSpeed>=1&&noteSpeed<=25&&noteStartPosition>=0&&noteStartPosition<=100)playSettings={noteSpeed,noteStartPosition};}catch{localStorage.removeItem(PLAY_SETTINGS_KEY);}
 const keys=new Set(),pointers=new Map(),effects=[],voices=new Set();
 const held=()=>new Set([...keys,...[...pointers.values()].map(p=>p.lane)]);
 const chartDuration=()=>chartData.metadata.durationMs/1000,offsetSeconds=()=>chartData.timing.offsetMs/1000,chartDelay=()=>Math.max(0,offsetSeconds()),audioDelay=()=>Math.max(0,-offsetSeconds());
@@ -52,7 +54,7 @@ function fillProjectedBar(view,span,point,height,color,inset=3){
   const bar=projectedBar(view,span,point,height,inset);ctx.fillStyle=color;ctx.beginPath();ctx.moveTo(bar.top.left,bar.top.y);ctx.lineTo(bar.top.right,bar.top.y);ctx.lineTo(bar.bottom.right,bar.bottom.y);ctx.lineTo(bar.bottom.left,bar.bottom.y);ctx.closePath();ctx.fill();return bar;
 }
 function draw(now){
-  const laneW=width/12,view=createPerspective(width,height,Number($('speed').value)),{hitY,judgementTop,judgementBottom,judgementHeight,judgementTopProgress,judgementBottomProgress,stageBottomProgress,topY,travel}=view;
+  const laneW=width/12,view=createPerspective(width,height,playSettings),{hitY,judgementTop,judgementBottom,judgementHeight,judgementTopProgress,judgementBottomProgress,stageBottomProgress,topY,travel,visibleY,visibleProgress}=view;
   ctx.clearRect(0,0,width,height);ctx.fillStyle='#090f18';ctx.fillRect(0,0,width,height);
   const active=held(),judgementCell=lane=>({topLeft:view.laneX(lane,judgementTopProgress),topRight:view.laneX(lane+1,judgementTopProgress),bottomLeft:view.laneX(lane,judgementBottomProgress),bottomRight:view.laneX(lane+1,judgementBottomProgress)}),traceJudgementCell=cell=>{ctx.beginPath();ctx.moveTo(cell.topLeft,judgementTop);ctx.lineTo(cell.topRight,judgementTop);ctx.lineTo(cell.bottomRight,judgementBottom);ctx.lineTo(cell.bottomLeft,judgementBottom);ctx.closePath();};if(game.auto&&phase==='playing')for(const n of game.notes)if(n.state==='holding'){const span=noteSpanAt(n,elapsed),from=Math.max(0,Math.floor(span.lane)),to=Math.min(12,Math.ceil(span.lane+span.width));for(let l=from;l<to;l++)active.add(l);}
   for(let l=0;l<12;l++){
@@ -61,13 +63,13 @@ function draw(now){
   for(let l=0;l<=12;l++){ctx.strokeStyle=l%3===0?'#39495d':'#263546';ctx.lineWidth=l%3===0?1.2:1;ctx.beginPath();ctx.moveTo(view.laneX(l,0),topY);ctx.lineTo(view.laneX(l,stageBottomProgress),height);ctx.stroke();}
   for(let beat=Math.floor(elapsed/.5);beat<elapsed/.5+travel*2+2;beat++){const point=view.project(beat*.5,elapsed);if(point.y<topY||point.y>hitY)continue;const left=view.laneX(0,point.p),right=view.laneX(12,point.p),lineScale=Math.max(.4,point.scale);ctx.fillStyle=beat%4===0?'#3b4d62':'#223244';ctx.fillRect(left,point.y,right-left,(beat%4===0?1.5:1)*lineScale);}
   ctx.strokeStyle='#506278';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(view.laneX(0,0),topY);ctx.lineTo(view.laneX(12,0),topY);ctx.stroke();
-  const topFade=ctx.createLinearGradient(0,0,0,topY+58);topFade.addColorStop(0,'#090f18');topFade.addColorStop(1,'#090f1800');
-  ctx.save();ctx.beginPath();ctx.moveTo(view.laneX(0,0),topY);ctx.lineTo(view.laneX(12,0),topY);ctx.lineTo(width,hitY);ctx.lineTo(width,height);ctx.lineTo(0,height);ctx.lineTo(0,hitY);ctx.closePath();ctx.clip();
+  const fadeEnd=Math.min(hitY,visibleY+58),topFade=ctx.createLinearGradient(0,visibleY,0,Math.max(visibleY+1,fadeEnd));topFade.addColorStop(0,'#090f18');topFade.addColorStop(1,'#090f1800');
+  ctx.save();ctx.beginPath();ctx.moveTo(view.laneX(0,visibleProgress),visibleY);ctx.lineTo(view.laneX(12,visibleProgress),visibleY);ctx.lineTo(width,hitY);ctx.lineTo(width,height);ctx.lineTo(0,height);ctx.lineTo(0,hitY);ctx.closePath();ctx.clip();
   for(const n of game.notes){
     if(n.state==='hit'||n.state==='miss')continue;
     const isFlickHold=n.type==='flick-hold',purple=n.type==='flick'||isFlickHold,startEvent=n.events.find(event=>event.id.endsWith(':start')),showStart=!n.duration||(n.startType!=='none'&&startEvent?.state==='pending');
     const startPoint=view.project(n.time,elapsed),endPoint=view.project(n.time+n.duration,elapsed),y=startPoint.y,tail=isFlickHold?Math.min(endPoint.y,hitY):endPoint.y;
-    if(y<topY-28||tail>height+30)continue;
+    if(y<visibleY-28||tail>height+30)continue;
     const lowerTime=n.duration?Math.max(n.time,Math.min(elapsed,n.time+n.duration)):n.time;
     const lowerSpan=noteSpanAt(n,lowerTime),endSpan=noteSpanAt(n,n.time+n.duration),endFlickSpan=flickSpan(n);
     const headProjection=view.span(lowerSpan,lowerTime,elapsed,3),endProjection=view.span(endSpan,n.time+n.duration,elapsed,3),flickProjection=view.span(endFlickSpan,n.time+n.duration,elapsed,3),x=headProjection.x,w=headProjection.w,endX=endProjection.x,endW=endProjection.w,flickX=flickProjection.x,flickW=flickProjection.w,head=n.duration?Math.min(headProjection.y,hitY):y,headScale=headProjection.scale,endScale=endProjection.scale,headMetrics=perspectiveMetrics(headScale),endMetrics=perspectiveMetrics(endScale);
@@ -85,7 +87,7 @@ function draw(now){
     }
   }
   ctx.restore();
-  ctx.fillStyle=topFade;ctx.fillRect(0,0,width,topY+58);
+  ctx.fillStyle=topFade;ctx.fillRect(0,visibleY,width,Math.max(1,fadeEnd-visibleY));
   const glow=ctx.createLinearGradient(0,judgementTop-12,0,judgementTop+judgementHeight+12);glow.addColorStop(0,'#b9f78d00');glow.addColorStop(.5,'#b9f78d18');glow.addColorStop(1,'#b9f78d00');ctx.fillStyle=glow;ctx.fillRect(0,judgementTop-12,width,judgementHeight+24);
   for(let i=effects.length-1;i>=0;i--){const e=effects[i],age=(now-e.start)/450;if(age>=1){effects.splice(i,1);continue;}ctx.globalAlpha=(1-age)*.8;ctx.strokeStyle=e.critical?'#ffd94a':e.flick?'#c68aff':e.hold?'#70dcf8':'#ff8291';ctx.lineWidth=2;ctx.strokeRect(e.lane*laneW+3-age*5,hitY-7-age*23,e.width*laneW-6+age*10,14+age*46);ctx.globalAlpha=1;}
   for(let l=0;l<12;l++){const cell=judgementCell(l),labelX=(cell.topLeft+cell.topRight+cell.bottomLeft+cell.bottomRight)/4;ctx.strokeStyle=active.has(l)?'#b9f78d':'#607287';ctx.lineWidth=active.has(l)?2:1.25;traceJudgementCell(cell);ctx.stroke();ctx.fillStyle=active.has(l)?'#d9ffbd':'#aab7c7';ctx.font=`600 ${Math.max(11,Math.min(16,laneW*.38))}px sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(LABELS[l],labelX,judgementTop+judgementHeight*.72);}ctx.textBaseline='alphabetic';
@@ -118,6 +120,11 @@ playbackMenuToggle.onclick=()=>setPlaybackMenu(playbackMenuPanel.hidden);
 document.addEventListener('pointerdown',event=>{if(!event.target.closest?.('.playback-menu'))setPlaybackMenu(false);});
 $('start').onclick=()=>{start();$('start').blur();};$('pause').onclick=()=>{if(phase==='playing')pause();else resume();setPlaybackMenu(false);playbackMenuToggle.focus();};$('restart').onclick=()=>{reset();setPlaybackMenu(false);playbackMenuToggle.focus();};$('theater-toggle').onclick=()=>{setTheaterMode(!playbackSection.classList.contains('theater-mode'));setPlaybackMenu(false);playbackMenuToggle.focus();};
 $('auto').onchange=()=>{if(phase==='ended')reset();else game.auto=$('auto').checked;};$('volume').oninput=()=>{const level=Number($('volume').value)/100;$('volume-value').value=`${$('volume').value}%`;if(master){master.gain.setTargetAtTime(level*.38,audio.currentTime,.02);trackGain.gain.setTargetAtTime(level,audio.currentTime,.02);}};
+const speedInput=$('speed'),startPositionInput=$('note-start-position'),visibleTimeOutput=$('note-visible-time');
+function syncPlaySettings(){speedInput.value=playSettings.noteSpeed.toFixed(1);startPositionInput.value=String(playSettings.noteStartPosition);visibleTimeOutput.value=`${getNoteVisibleTimeMs(playSettings.noteSpeed,playSettings.noteStartPosition)} ms`;localStorage.setItem(PLAY_SETTINGS_KEY,JSON.stringify(playSettings));}
+function updatePlaySetting(key,value){const number=Number(value);if(!Number.isFinite(number)){syncPlaySettings();return;}if(key==='noteSpeed')playSettings.noteSpeed=Math.max(1,Math.min(25,Math.round(number*10)/10));else playSettings.noteStartPosition=Math.max(0,Math.min(100,Math.round(number/5)*5));syncPlaySettings();}
+for(const [id,key,step] of [['speed-down','noteSpeed',-.1],['speed-up','noteSpeed',.1],['note-start-down','noteStartPosition',-5],['note-start-up','noteStartPosition',5]])$(id).onclick=()=>updatePlaySetting(key,playSettings[key]+step);
+speedInput.onchange=()=>updatePlaySetting('noteSpeed',speedInput.value);startPositionInput.onchange=()=>updatePlaySetting('noteStartPosition',startPositionInput.value);speedInput.onkeydown=startPositionInput.onkeydown=event=>{if(['e','E','+','-'].includes(event.key))event.preventDefault();};syncPlaySettings();
 function syncChartMeta(){const duration=formatTime(chartDuration());$('play-title').textContent=chartData.metadata.title;$('play-difficulty').textContent=chartData.metadata.difficulty;$('track-title').textContent=chartData.metadata.title;$('track-bpm').textContent=chartData.timing.bpm;$('track-duration').textContent=duration;$('total-time').textContent=duration;$('track-source').textContent=externalTrack?externalTrack.fileName:'オリジナル・シンセデモ';}
 const latestNoteEnd=chart=>Math.max(1000,...(Array.isArray(chart?.notes)?chart.notes:[]).map(n=>(Number(n?.timeMs)||0)+(Number(n?.durationMs)||0)));
 function storeChart(next){const candidate=structuredClone(next);if(externalTrack){const offset=Number(candidate.timing?.offsetMs??0),audioEnd=Number.isFinite(offset)?externalTrack.durationMs-offset:0;candidate.metadata={...(candidate.metadata||{}),durationMs:Math.max(candidate.metadata?.durationMs??0,latestNoteEnd(candidate),audioEnd,1000)};}chartData=validateChartData(candidate);localStorage.setItem('twelve-chart-v1',JSON.stringify(chartData));syncChartMeta();return chartData;}
