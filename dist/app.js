@@ -44,6 +44,13 @@ function drawFlickArrows(x,y,w,scale=1,color='#d8b1ff'){
   }
   ctx.stroke();ctx.lineCap='butt';
 }
+function projectedBar(view,span,point,height,inset=3){
+  const depth=Math.max(1,view.hitY-view.topY),edge=offset=>{const p=point.p+offset/depth,scale=view.laneScale(p),left=view.laneX(span.lane,p),right=view.laneX(span.lane+span.width,p),safeInset=Math.max(0,Math.min(inset*scale,(right-left)*.22));return{left:left+safeInset,right:right-safeInset,y:point.y+offset};};
+  return{top:edge(-height/2),bottom:edge(height/2)};
+}
+function fillProjectedBar(view,span,point,height,color,inset=3){
+  const bar=projectedBar(view,span,point,height,inset);ctx.fillStyle=color;ctx.beginPath();ctx.moveTo(bar.top.left,bar.top.y);ctx.lineTo(bar.top.right,bar.top.y);ctx.lineTo(bar.bottom.right,bar.bottom.y);ctx.lineTo(bar.bottom.left,bar.bottom.y);ctx.closePath();ctx.fill();return bar;
+}
 function draw(now){
   const laneW=width/12,view=createPerspective(width,height,Number($('speed').value)),{hitY,judgementTop,judgementBottom,judgementHeight,judgementTopProgress,judgementBottomProgress,stageBottomProgress,topY,travel}=view;
   ctx.clearRect(0,0,width,height);ctx.fillStyle='#090f18';ctx.fillRect(0,0,width,height);
@@ -68,13 +75,13 @@ function draw(now){
       const tint=isFlickHold?'#b875ff':'#70dcf8',body=ctx.createLinearGradient(0,Math.min(tail,head-1),0,head);body.addColorStop(0,tint+'22');body.addColorStop(1,tint+(n.state==='holding'?'b0':'63'));ctx.fillStyle=body;
       ctx.beginPath();ctx.moveTo(x,head);ctx.lineTo(x+w,head);ctx.lineTo(endX+endW,tail);ctx.lineTo(endX,tail);ctx.closePath();ctx.fill();
       ctx.strokeStyle=tint+'7a';ctx.lineWidth=(headMetrics.outlineWidth+endMetrics.outlineWidth)/2;ctx.beginPath();ctx.moveTo(x,head);ctx.lineTo(endX,tail);ctx.moveTo(x+w,head);ctx.lineTo(endX+endW,tail);ctx.stroke();
-      ctx.fillStyle=isFlickHold?'#e5c9ff':'#a0ebff';ctx.fillRect(endX,tail,endW,endMetrics.accentHeight*1.5);
+      fillProjectedBar(view,endSpan,endProjection,endMetrics.accentHeight*1.5,isFlickHold?'#e5c9ff':'#a0ebff');
     }
     const color=n.critical?'#ffd94a':purple?'#b875ff':n.duration?'#70dcf8':'#ff4e64';
-    if(showStart){const headHeight=headMetrics.noteHeight;ctx.shadowColor=color;ctx.shadowBlur=headMetrics.shadowBlur*(n.state==='holding'?1.65:.85);ctx.fillStyle=color;ctx.fillRect(x,head-headHeight/2,w,headHeight);ctx.shadowBlur=0;ctx.fillStyle=n.critical?'#fff2a5':purple?'#e5c9ff':n.duration?'#c5f4ff':'#ffb1bb';ctx.fillRect(x,head-headHeight/2,w,headMetrics.accentHeight);}
+    if(showStart){const headHeight=headMetrics.noteHeight;ctx.shadowColor=color;ctx.shadowBlur=headMetrics.shadowBlur*(n.state==='holding'?1.65:.85);if(n.duration){fillProjectedBar(view,lowerSpan,headProjection,headHeight,color);const accentPoint={...headProjection,y:headProjection.y-headHeight/2+headMetrics.accentHeight/2,p:headProjection.p+(-headHeight/2+headMetrics.accentHeight/2)/Math.max(1,hitY-topY)};fillProjectedBar(view,lowerSpan,accentPoint,headMetrics.accentHeight,n.critical?'#fff2a5':purple?'#e5c9ff':'#c5f4ff');}else{ctx.fillStyle=color;ctx.fillRect(x,head-headHeight/2,w,headHeight);ctx.fillStyle=n.critical?'#fff2a5':purple?'#e5c9ff':'#ffb1bb';ctx.fillRect(x,head-headHeight/2,w,headMetrics.accentHeight);}ctx.shadowBlur=0;}
     if(showStart&&(n.type==='flick'||n.startType==='scratch'))drawFlickArrows(x,head,w,headScale,n.critical?'#fff7bd':'#d8b1ff');
     if(isFlickHold){
-      const flickHeight=endMetrics.noteHeight;ctx.shadowColor='#b875ff';ctx.shadowBlur=endMetrics.shadowBlur;ctx.fillStyle='#b875ff';ctx.fillRect(flickX,tail-flickHeight/2,flickW,flickHeight);ctx.shadowBlur=0;ctx.fillStyle='#e5c9ff';ctx.fillRect(flickX,tail-flickHeight/2,flickW,endMetrics.accentHeight);drawFlickArrows(flickX,tail,flickW,endScale);
+      const flickHeight=endMetrics.noteHeight;ctx.shadowColor='#b875ff';ctx.shadowBlur=endMetrics.shadowBlur;fillProjectedBar(view,endFlickSpan,flickProjection,flickHeight,'#b875ff');const accentPoint={...flickProjection,y:flickProjection.y-flickHeight/2+endMetrics.accentHeight/2,p:flickProjection.p+(-flickHeight/2+endMetrics.accentHeight/2)/Math.max(1,hitY-topY)};fillProjectedBar(view,endFlickSpan,accentPoint,endMetrics.accentHeight,'#e5c9ff');ctx.shadowBlur=0;drawFlickArrows(flickX,tail,flickW,endScale);
     }
   }
   ctx.restore();
