@@ -102,7 +102,7 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
 
   function renderInspector(){
     const n=noteById(selectedId);empty.hidden=!!n;form.hidden=!n;$('selected-id').textContent=n?n.id:'未選択';if(!n)return;
-    $('note-type').value=n.type;$('note-critical').checked=!!n.critical;$('note-time').max=durationMs();$('note-time').value=n.timeMs;$('note-duration').max=Math.max(100,durationMs()-n.timeMs);$('note-duration').value=n.durationMs||1000;$('note-lane').value=n.lane+1;$('note-width').value=n.width;
+    $('note-type').value=n.type;$('note-critical').checked=!!n.critical;$('note-critical').disabled=isHold(n)&&n.startType==='scratch';$('note-time').max=durationMs();$('note-time').value=n.timeMs;$('note-duration').max=Math.max(100,durationMs()-n.timeMs);$('note-duration').value=n.durationMs||1000;$('note-lane').value=n.lane+1;$('note-width').value=n.width;
     $('hold-judgement-fields').hidden=!isHold(n);$('hold-start-type').value=n.startType??'none';$('hold-checkpoints').value=(n.checkpoints??[]).join(', ');$('flick-end-fields').hidden=n.type!=='flick-hold';$('next-field').hidden=!isHold(n);$('note-duration').disabled=!isHold(n);
     $('flick-lane').value=(n.endFlick?.lane??n.lane)+1;$('flick-width').value=n.endFlick?.width??n.width;
     const next=$('note-next'),value=n.nextId||'';next.replaceChildren(new Option('なし',''));for(const x of chart.notes.filter(x=>x.id!==n.id&&isHold(x)))next.add(new Option(`${x.id} · ${(x.timeMs/1000).toFixed(2)}s · ${noteLabel(x)}`,x.id));next.value=value;
@@ -165,7 +165,7 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
     n.type=$('note-type').value;n.critical=$('note-critical').checked;n.timeMs=Number($('note-time').value);n.lane=Number($('note-lane').value)-1;n.width=Number($('note-width').value);
     if(isHold(n)){
       const nextDuration=Number($('note-duration').value);n.durationMs=nextDuration;n.nextId=$('note-next').value||undefined;
-      n.startType=wasHold?$('hold-start-type').value:'normal';
+      n.startType=wasHold?$('hold-start-type').value:'normal';if(n.startType==='scratch')n.critical=false;
       try{n.checkpoints=wasHold?(nextDuration===current.durationMs?parseCheckpoints($('hold-checkpoints').value):resizedCheckpoints(current,nextDuration)):defaultHoldCheckpoints(nextDuration);}catch(error){setStatus(error.message,'error');renderInspector();return;}
     }else{delete n.durationMs;delete n.nextId;delete n.startType;delete n.checkpoints;for(const x of next.notes)if(x.nextId===n.id)delete x.nextId;}
     if(n.type==='flick-hold')n.endFlick=oldType==='flick-hold'?{lane:Number($('flick-lane').value)-1,width:Number($('flick-width').value)}:{lane:n.lane,width:n.width};else delete n.endFlick;

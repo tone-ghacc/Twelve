@@ -35,7 +35,7 @@ export function createJudgementEvents(note){
     return events;
   }
   if(note.startType==='normal')push('start',note.critical?'critical-hold-start':'hold-start',note.timeMs,'press');
-  else if(note.startType==='scratch')push('start',note.critical?'critical-scratch-start':'scratch-start',note.timeMs,'flick');
+  else if(note.startType==='scratch')push('start','scratch-start',note.timeMs,'flick');
   for(const offset of note.checkpoints??defaultHoldCheckpoints(note.durationMs))push(`checkpoint-${offset}`,'hold-checkpoint',note.timeMs+offset,'hold');
   const endTime=note.timeMs+note.durationMs;
   if(note.type==='flick-hold')push('end','flick-end',endTime,'flick',note.endFlick);
@@ -67,7 +67,7 @@ export function createDefaultChartData() {
     if(n.durationMs){
       n.startType=['normal','scratch','none'][holdIndex%3];
       n.checkpoints=defaultHoldCheckpoints(n.durationMs);
-      if(holdIndex%4===1)n.critical=true;
+      if(n.startType==='normal'&&holdIndex%2===0)n.critical=true;
       holdIndex++;
     }else{
       if(index%11===2)n.critical=true;
@@ -100,6 +100,7 @@ export function validateChartData(input) {
       if(!Number.isInteger(n.durationMs)||n.durationMs<100||n.timeMs+n.durationMs>durationMs)throw new Error(`${n.id}: ホールド時間が不正です`);
       n.startType=n.startType??'none';
       if(!HOLD_START_TYPES.includes(n.startType))throw new Error(`${n.id}: startType は none / normal / scratch で指定してください`);
+      if(n.startType==='scratch'&&n.critical)throw new Error(`${n.id}: スクラッチ始点にCritical属性は設定できません`);
       n.checkpoints=n.checkpoints??defaultHoldCheckpoints(n.durationMs);
       if(!Array.isArray(n.checkpoints)||n.checkpoints.some(value=>!Number.isInteger(value)||value<=0||value>=n.durationMs))throw new Error(`${n.id}: checkpoints は始点より後、終点より前の相対整数msで指定してください`);
       if(new Set(n.checkpoints).size!==n.checkpoints.length)throw new Error(`${n.id}: checkpoints を重複させることはできません`);

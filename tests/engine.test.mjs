@@ -29,8 +29,9 @@ const baseChart=note=>({
 }
 
 {
-  const scratch={id:'scratch',type:'hold',timeMs:1000,durationMs:300,lane:0,width:2,startType:'scratch',critical:true,checkpoints:[100,200]};
-  assert.deepEqual(createJudgementEvents(scratch).map(event=>event.kind),['critical-scratch-start','hold-checkpoint','hold-checkpoint','hold-end']);
+  const scratch={id:'scratch',type:'hold',timeMs:1000,durationMs:300,lane:0,width:2,startType:'scratch',critical:false,checkpoints:[100,200]};
+  assert.deepEqual(createJudgementEvents(scratch).map(event=>event.kind),['scratch-start','hold-checkpoint','hold-checkpoint','hold-end']);
+  assert.throws(()=>validateChartData(baseChart({...scratch,critical:true})),/スクラッチ始点にCritical属性は設定できません/);
 }
 
 {
