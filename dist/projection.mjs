@@ -34,13 +34,13 @@ export function getNoteSpawnTimeMs(judgeTimeMs,noteSpeed,noteStartPosition){
   return judgeTimeMs-getNoteVisibleTimeMs(noteSpeed,noteStartPosition);
 }
 
-export function perspectiveMetrics(scale){
-  const value=clamp(scale,.2,1.15);return{noteHeight:12*value,accentHeight:Math.max(1,2*value),outlineWidth:Math.max(.75,2*value),arrowOffset:16*value,arrowHeight:Math.max(1.5,4*value),shadowBlur:12*value,tickHeight:Math.max(.75,value)};
+export function perspectiveMetrics(scale,thickness=1){
+  const value=clamp(scale,.2,1.15),size=clamp(Number(thickness)||1,.5,2);return{noteHeight:12*value*size,accentHeight:Math.max(.5,2*value*size),outlineWidth:Math.max(.75,2*value),arrowOffset:(10+6*size)*value,arrowHeight:Math.max(1.5,4*value),shadowBlur:12*value,tickHeight:Math.max(.75,value)};
 }
 
 export function createPerspective(width,height,settings={}){
   const noteSpeed=validateNoteSpeed(settings.noteSpeed??10),noteStartPosition=validateNoteStartPosition(settings.noteStartPosition??50),visibleTimeMs=getNoteVisibleTimeMs(noteSpeed,noteStartPosition),fullTravelTimeMs=getNoteVisibleTimeMs(noteSpeed,0),travel=Math.max(.001,fullTravelTimeMs/1000),visibleLinear=fullTravelTimeMs?clamp(1-visibleTimeMs/fullTravelTimeMs,0,1):1;
-  const judgementHeight=Math.max(18,Math.min(80,width/24)),edgeGap=Math.max(28,Math.min(52,height*.07)),bottomGap=edgeGap+judgementHeight,hitY=height-bottomGap-judgementHeight/2,judgementTop=hitY-judgementHeight/2,judgementBottom=judgementTop+judgementHeight,topY=0,judgementTopProgress=(judgementTop-topY)/(hitY-topY),judgementBottomProgress=(judgementBottom-topY)/(hitY-topY),stageBottomProgress=(height-topY)/(hitY-topY),topScale=1/6,depthPower=2.2,entrySlope=.28,exitSlope=entrySlope+(1-entrySlope)*depthPower;
+  const judgementHeight=Math.max(18,Math.min(80,width/24)),hitY=height*.8,bottomGap=height-hitY-judgementHeight/2,judgementTop=hitY-judgementHeight/2,judgementBottom=judgementTop+judgementHeight,topY=0,judgementTopProgress=(judgementTop-topY)/(hitY-topY),judgementBottomProgress=(judgementBottom-topY)/(hitY-topY),stageBottomProgress=(height-topY)/(hitY-topY),topScale=1/6,depthPower=2.2,entrySlope=.28,exitSlope=entrySlope+(1-entrySlope)*depthPower;
   const projectProgress=linear=>linear<0?linear*entrySlope:linear<=1?entrySlope*linear+(1-entrySlope)*Math.pow(linear,depthPower):1+(linear-1)*exitSlope;
   const progress=(at,elapsed)=>projectProgress(1-(at-elapsed)/travel);
   const visibleProgress=projectProgress(visibleLinear),visibleY=topY+(hitY-topY)*visibleProgress;
