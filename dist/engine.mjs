@@ -1,5 +1,6 @@
 export const HOLD_INTERVAL = 0.1;
 export const HOLD_INTERVAL_MS = Math.round(HOLD_INTERVAL * 1000);
+export const FLICK_HANDOFF_SECONDS = .16;
 const EPSILON = 1e-7;
 export const HOLD_START_TYPES = Object.freeze(['none','normal','scratch']);
 export const JUDGEMENT_WINDOWS = Object.freeze([
@@ -132,6 +133,7 @@ export function createChart(chartData=createDefaultChartData()) {
 export class Game {
   constructor(auto=false,chartData=createDefaultChartData()) {
     this.auto=auto;this.notes=createChart(chartData);this.totalJudgements=this.notes.reduce((total,n)=>total+n.events.length,0);this.held=new Set();this.lastTime=0;this.combo=0;this.maxCombo=0;this.score=0;this.perfectPlus=0;this.perfect=0;this.great=0;this.good=0;this.bad=0;this.miss=0;this.autoCount=0;this.earned=0;this.onJudge=()=>{};
+    this.pointers=new Map();this.handoffs=new Map();this.notesById=new Map(this.notes.map(n=>[n.sourceId,n]));
   }
   covers(n,lane){return this.spanCovers(noteSpanAt(n),lane);}
   spanCovers(span,lane,padding=0){return Number.isInteger(lane)&&lane>=0&&lane<KEYS.length&&lane>=Math.max(0,span.lane-padding)&&lane<Math.min(KEYS.length,span.lane+span.width+padding);}
@@ -161,7 +163,22 @@ export class Game {
     this.earned+=(SCORE_MULTIPLIERS[grade]??0)-(SCORE_MULTIPLIERS[previousGrade]??0);
     this.score=this.totalJudgements?Math.round(this.earned/this.totalJudgements*1000000):0;this.onJudge(grade,n,span,event);
   }
-  isSpanHeld(n,lanes){return this.auto||[...lanes].some(lane=>this.spanCovers(noteSpanAt(n),lane,1));}
+  isSpanHeld(n,lanes,t=this.lastTime,pointers=this.pointers){
+    if(this.auto||[...lanes].some(lane=>this.spanCovers(noteSpanAt(n),lane,1)))return true;
+    const handoff=this.handoffs.get(n.sourceId);
+    return !!handoff&&t>=n.time-EPSILON&&t<=handoff.until+EPSILON&&pointers.has(handoff.pointerId);
+  }
+  pointerSnapshot(pointers){return new Map([...pointers].map(([id,p])=>[id,typeof p==='number'?p:p.lane]));}
+  prepareFlickHandoff(hit,t,pointerId,pointers){
+    if(pointerId===null||!pointers.has(pointerId)||hit.event.kind!=='flick-end'||hit.n.type!=='flick-hold')return;
+    const next=this.notesById.get(hit.n.nextId);
+    // Explicit start judgements still require their own input. Only the
+    // no-start continuation of this exact linked hold receives the grace.
+    if(!next||next.type!=='flick-hold'||next.startType!=='none')return;
+    const grade=timingGrade(hit.event.time-t);
+    if(grade==='MISS'&&!hit.event.provisionalGrade)return;
+    this.handoffs.set(next.sourceId,{pointerId,sourceId:hit.n.sourceId,judgedAt:t,until:Math.min(next.time+next.duration,Math.max(next.time,t)+FLICK_HANDOFF_SECONDS)});
+  }
   // One input resolves one pending event. Near-equal times prefer the actual
   // note span, then keep the chart/event traversal order as a stable tie-break.
   selectInputCandidate(input,lanes,t){
@@ -188,30 +205,38 @@ export class Game {
       this.record(hit.n,'GREAT',this.eventSpan(hit.event),hit.event);
     }else this.finishEvent(hit.n,hit.event,timingGrade(hit.event.time-t),t);
   }
-  flick(lanes,t) {
+  flick(lanes,t,{pointerId=null,pointers=this.pointers,held=this.held}={}) {
     if(this.auto)return;
-    this.update(t,this.held);
     const hit=this.selectInputCandidate('flick',lanes,t);
+    // Register before settling due checkpoints in this same pointer event.
+    // No finished MISS is revived, and the flick still consumes one event.
+    if(hit)this.prepareFlickHandoff(hit,t,pointerId,this.pointerSnapshot(pointers));
+    this.update(t,held,pointers);
     if(hit)this.finishEvent(hit.n,hit.event,timingGrade(hit.event.time-t),t);
   }
-  update(t,held) {
+  update(t,held,pointers=this.pointers) {
     if(t<this.lastTime-EPSILON)return;
-    const currentHeld=new Set(held),due=[];
+    const currentHeld=new Set(held),currentPointers=this.pointerSnapshot(pointers),due=[];
     for(const n of this.notes){
-      const acceptedEndFlick=n.events.find(event=>event.kind==='flick-end'&&event.state==='hit');
+      const acceptedEndFlick=n.events.find(event=>event.kind==='flick-end'&&event.state==='hit')??[...this.handoffs.values()].find(handoff=>handoff.sourceId===n.sourceId);
       for(const event of n.events){
         if(event.state!=='pending')continue;
         if(this.auto&&t>=event.time-EPSILON){due.push({n,event,grade:'AUTO',at:event.time});continue;}
         if(event.input==='hold'&&t>=event.time-EPSILON){
           const lanes=event.time<t-EPSILON?this.held:currentHeld;
-          const heldNow=(acceptedEndFlick&&event.kind==='hold-checkpoint'&&event.time>=acceptedEndFlick.judgedAt-EPSILON)||this.isSpanHeld(n,lanes);
+          const pointerState=event.time<t-EPSILON?this.pointers:currentPointers;
+          const heldNow=(acceptedEndFlick&&event.kind==='hold-checkpoint'&&event.time>=acceptedEndFlick.judgedAt-EPSILON)||this.isSpanHeld(n,lanes,event.time,pointerState);
           due.push({n,event,grade:heldNow?'PERFECT':'MISS',at:event.time});
         }else if((event.input==='press'||event.input==='flick')&&t>event.time+.16+EPSILON)due.push({n,event,grade:event.provisionalGrade??'MISS',at:event.time+.16});
       }
     }
     due.sort((a,b)=>a.at-b.at||a.n.id-b.n.id||a.event.id.localeCompare(b.event.id));
     for(const item of due)this.finishEvent(item.n,item.event,item.grade,item.at);
-    this.held=currentHeld;this.lastTime=t;
+    this.held=currentHeld;this.pointers=currentPointers;this.lastTime=t;
+    for(const [id,handoff] of this.handoffs){
+      const next=this.notesById.get(id),lane=currentPointers.get(handoff.pointerId);
+      if(lane===undefined||t>handoff.until+EPSILON||(t>=next.time-EPSILON&&this.spanCovers(noteSpanAt(next),lane,1)))this.handoffs.delete(id);
+    }
     for(const n of this.notes)this.updateNoteState(n);
   }
 }

@@ -32,7 +32,7 @@ function schedule(){const melody=[0,7,12,14,7,12,3,7,0,10,12,7,3,7,10,14],roots=
 function time(){return phase==='playing'?Math.min(chartDuration(),audio.currentTime-epoch-chartDelay()):elapsed;}
 function setPhase(p){phase=p;$('state-label').textContent=({ready:'READY',playing:game.auto?'AUTO PLAY':'PLAYING',paused:'PAUSED',ended:'FINISHED'})[p];$('pause').disabled=p==='ready'||p==='ended';$('pause').textContent=p==='playing'?'Ⅱ 一時停止':'▶ 再生';$('auto').disabled=p==='playing'||p==='paused';}
 async function start(){if(phase==='playing')return;if(phase==='paused'){await resume();return;}try{await audioInit();}catch{$('overlay-description').textContent='音声を開始できませんでした。もう一度お試しください。';return;}silence();keys.clear();pointers.clear();newGame();elapsed=-chartDelay();scheduledStep=0;epoch=audio.currentTime;startExternalSource();$('overlay').style.display='none';$('score').textContent='0000000';$('combo-box').style.display='none';showJudgement();setPhase('playing');}
-function pause(){if(phase!=='playing')return;elapsed=time();game.update(elapsed,held());silence();setPhase('paused');keys.clear();pointers.clear();game.update(elapsed,held());showOverlay('PAUSED','ひと休み。','ホールドは途中からでも押し直せます。','▶ 続ける');}
+function pause(){if(phase!=='playing')return;elapsed=time();game.update(elapsed,held(),pointers);silence();setPhase('paused');keys.clear();pointers.clear();game.update(elapsed,held(),pointers);showOverlay('PAUSED','ひと休み。','ホールドは途中からでも押し直せます。','▶ 続ける');}
 async function resume(){try{await audioInit();}catch{return;}epoch=audio.currentTime-(elapsed+chartDelay());scheduledStep=Math.max(0,Math.ceil((elapsed-2)/.25));keys.clear();pointers.clear();startExternalSource();setPhase('playing');$('overlay').style.display='none';}
 function showOverlay(label,title,description,button){$('overlay').style.display='flex';$('overlay-label').textContent=label;$('overlay-title').textContent=title;$('overlay-description').textContent=description;$('start').textContent=button;}
 function reset(){silence();elapsed=0;keys.clear();pointers.clear();effects.length=0;newGame();setPhase('ready');$('score').textContent='0000000';$('combo-box').style.display='none';showJudgement();showOverlay('12 LANES. YOUR RHYTHM.','リズムを、つかもう。','赤はタップ。黄はCritical。水色は長押し。紫はフリック。','▶ プレイする');}
@@ -102,10 +102,10 @@ function draw(now){
   for(let i=effects.length-1;i>=0;i--){const e=effects[i],age=(now-e.start)/450;if(age>=1){effects.splice(i,1);continue;}ctx.globalAlpha=(1-age)*.8;ctx.strokeStyle=e.critical?'#ffd94a':e.flick?'#c68aff':e.hold?'#70dcf8':'#ff8291';ctx.lineWidth=2;ctx.strokeRect(e.lane*laneW+3-age*5,hitY-7-age*23,e.width*laneW-6+age*10,14+age*46);ctx.globalAlpha=1;}
   for(let l=0;l<12;l++){const cell=judgementCell(l),labelX=(cell.topLeft+cell.topRight+cell.bottomLeft+cell.bottomRight)/4;ctx.strokeStyle=active.has(l)?'#b9f78d':'#607287';ctx.lineWidth=active.has(l)?2:1.25;traceJudgementCell(cell);ctx.stroke();ctx.fillStyle=active.has(l)?'#d9ffbd':'#aab7c7';ctx.font=`600 ${Math.max(11,Math.min(16,laneW*.38))}px sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(LABELS[l],labelX,judgementTop+judgementHeight*.72);}ctx.textBaseline='alphabetic';
 }
-function frame(now){if(phase==='playing'){elapsed=time();game.update(elapsed,held());for(const p of pointers.values())p.gesture.rest(now);if(!externalTrack)schedule();if(elapsed>=chartDuration())end();}if(now>judgeUntil)$('judgement').textContent='';draw(now);if(now-frameTime>100){$('elapsed').textContent=formatTime(Math.max(0,elapsed));frameTime=now;}requestAnimationFrame(frame);}
-function press(lane){if(phase==='playing'){const t=time();game.update(t,held());game.press(lane,t);}}
+function frame(now){if(phase==='playing'){elapsed=time();game.update(elapsed,held(),pointers);for(const p of pointers.values())p.gesture.rest(now);if(!externalTrack)schedule();if(elapsed>=chartDuration())end();}if(now>judgeUntil)$('judgement').textContent='';draw(now);if(now-frameTime>100){$('elapsed').textContent=formatTime(Math.max(0,elapsed));frameTime=now;}requestAnimationFrame(frame);}
+function press(lane){if(phase==='playing'){const t=time();game.update(t,held(),pointers);game.press(lane,t);}}
 window.addEventListener('keydown',e=>{if(e.code==='Escape'&&!playbackMenuPanel.hidden){e.preventDefault();setPlaybackMenu(false);playbackMenuToggle.focus();return;}if(e.code==='Escape'&&playbackSection.classList.contains('theater-mode')){e.preventDefault();setTheaterMode(false);playbackMenuToggle.focus();return;}if(!$('editor-workspace').hidden||e.target.matches('input,select,button,a,textarea'))return;if(e.code==='Space'){e.preventDefault();if(!e.repeat){if(phase==='playing')pause();else if(phase==='paused')resume();else start();}return;}const lane=KEYS.indexOf(e.code);if(lane<0)return;e.preventDefault();if(!e.repeat&&!keys.has(lane)){keys.add(lane);press(lane);}});
-window.addEventListener('keyup',e=>{const lane=KEYS.indexOf(e.code);if(lane>=0){keys.delete(lane);if(phase==='playing')game.update(time(),held());}});
+window.addEventListener('keyup',e=>{const lane=KEYS.indexOf(e.code);if(lane>=0){keys.delete(lane);if(phase==='playing')game.update(time(),held(),pointers);}});
 const pointerLane=e=>Math.max(0,Math.min(11,Math.floor((e.clientX-canvas.getBoundingClientRect().left)/width*12)));
 const flickLane=x=>x<0||x>=width?-1:Math.floor(x/width*12);
 canvas.addEventListener('pointerdown',e=>{if(phase!=='playing'||pointers.has(e.pointerId)||(e.pointerType==='mouse'&&e.button!==0))return;e.preventDefault();canvas.setPointerCapture(e.pointerId);const lane=pointerLane(e),x=e.clientX-canvas.getBoundingClientRect().left;pointers.set(e.pointerId,{lane,gesture:new FlickGesture(x,e.clientY,e.timeStamp)});press(lane);});
@@ -120,12 +120,14 @@ function movePointer(e){
   const p=pointers.get(e.pointerId);if(!p||phase!=='playing')return;
   const lane=pointerLane(e),x=e.clientX-canvas.getBoundingClientRect().left;
   // Sliding changes held lanes and can flick, but never creates a new press.
-  if(lane!==p.lane){p.lane=lane;game.update(time(),held());}
+  p.lane=lane;
   const flick=p.gesture.move(x,e.clientY,e.timeStamp);
-  if(flick)game.flick([flickLane(flick.fromX),flickLane(flick.x)],time());
+  const t=time();
+  if(flick)game.flick([flickLane(flick.fromX),flickLane(flick.x)],t,{pointerId:e.pointerId,pointers,held:held()});
+  else game.update(t,held(),pointers);
 }
 canvas.addEventListener('pointermove',movePointer);
-function release(e){if(e.type==='pointerup')movePointer(e);pointers.delete(e.pointerId);if(phase==='playing')game.update(time(),held());}canvas.addEventListener('pointerup',release);canvas.addEventListener('pointercancel',release);canvas.addEventListener('lostpointercapture',release);
+function release(e){if(e.type==='pointerup')movePointer(e);pointers.delete(e.pointerId);if(phase==='playing')game.update(time(),held(),pointers);}canvas.addEventListener('pointerup',release);canvas.addEventListener('pointercancel',release);canvas.addEventListener('lostpointercapture',release);
 document.addEventListener('visibilitychange',()=>{if(document.hidden)pause();});window.addEventListener('blur',()=>pause());
 playbackMenuToggle.onclick=()=>setPlaybackMenu(playbackMenuPanel.hidden);
 document.addEventListener('pointerdown',event=>{if(!event.target.closest?.('.playback-menu'))setPlaybackMenu(false);});

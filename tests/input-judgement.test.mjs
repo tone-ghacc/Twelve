@@ -144,4 +144,26 @@ function inputHarness(notes){
   assert.equal(input.game.perfect,2,'sliding continues to update held lanes');
   input.pointer('pointercancel',4,1.21);assert.equal(input.pointers.size,0);
 }
+{
+  const input=inputHarness([
+    {id:'source',type:'flick-hold',timeMs:1000,durationMs:1000,lane:1,width:1,startType:'none',checkpoints:[980],endFlick:{lane:0,width:10},nextId:'next'},
+    {id:'next',type:'flick-hold',timeMs:2000,durationMs:800,lane:2,width:1,startType:'none',checkpoints:[100,200],endFlick:{lane:2,width:1}}
+  ]);
+  input.pointer('pointerdown',1,1.8);input.pointer('pointermove',1,1.9);
+  input.pointer('pointermove',9,1.98);
+  input.pointer('pointermove',9,2.1);
+  assert.equal(input.game.miss,0,'pointer routing must register the flick handoff before updating checkpoints');
+  assert.equal(input.game.perfectPlus,1);assert.equal(input.game.perfect,2);
+  input.pointer('pointermove',2,2.14);input.pointer('pointermove',2,2.2);
+  assert.equal(input.game.perfect,3,'returning to the next body restores ordinary held input');
+}
+for(const releaseType of ['pointerup','pointercancel','lostpointercapture']){
+  const input=inputHarness([
+    {id:'source',type:'flick-hold',timeMs:1000,durationMs:1000,lane:1,width:1,startType:'none',checkpoints:[],endFlick:{lane:0,width:10},nextId:'next'},
+    {id:'next',type:'flick-hold',timeMs:2000,durationMs:800,lane:2,width:1,startType:'none',checkpoints:[100],endFlick:{lane:2,width:1}}
+  ]);
+  input.pointer('pointerdown',1,1.8);input.pointer('pointermove',1,1.9);input.pointer('pointermove',9,1.98);
+  input.pointer(releaseType,9,2.04);input.pointer('pointerdown',9,2.1);
+  assert.equal(input.game.miss,1,`${releaseType} ends the pointer handoff, including reused pointer IDs`);
+}
 console.log('Input judgement and event routing tests passed');
