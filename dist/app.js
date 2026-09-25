@@ -104,11 +104,11 @@ function draw(now){
 }
 function frame(now){if(phase==='playing'){elapsed=time();game.update(elapsed,held());for(const p of pointers.values())p.gesture.rest(now);if(!externalTrack)schedule();if(elapsed>=chartDuration())end();}if(now>judgeUntil)$('judgement').textContent='';draw(now);if(now-frameTime>100){$('elapsed').textContent=formatTime(Math.max(0,elapsed));frameTime=now;}requestAnimationFrame(frame);}
 function press(lane){if(phase==='playing'){const t=time();game.update(t,held());game.press(lane,t);}}
-window.addEventListener('keydown',e=>{if(e.code==='Escape'&&!playbackMenuPanel.hidden){e.preventDefault();setPlaybackMenu(false);playbackMenuToggle.focus();return;}if(e.code==='Escape'&&playbackSection.classList.contains('theater-mode')){e.preventDefault();setTheaterMode(false);playbackMenuToggle.focus();return;}if(!$('editor-workspace').hidden||e.target.matches('input,select,button,a,textarea'))return;if(e.code==='Space'){e.preventDefault();if(!e.repeat){if(phase==='playing')pause();else if(phase==='paused')resume();else start();}return;}const lane=KEYS.indexOf(e.code);if(lane<0)return;e.preventDefault();if(!e.repeat){keys.add(lane);press(lane);}});
+window.addEventListener('keydown',e=>{if(e.code==='Escape'&&!playbackMenuPanel.hidden){e.preventDefault();setPlaybackMenu(false);playbackMenuToggle.focus();return;}if(e.code==='Escape'&&playbackSection.classList.contains('theater-mode')){e.preventDefault();setTheaterMode(false);playbackMenuToggle.focus();return;}if(!$('editor-workspace').hidden||e.target.matches('input,select,button,a,textarea'))return;if(e.code==='Space'){e.preventDefault();if(!e.repeat){if(phase==='playing')pause();else if(phase==='paused')resume();else start();}return;}const lane=KEYS.indexOf(e.code);if(lane<0)return;e.preventDefault();if(!e.repeat&&!keys.has(lane)){keys.add(lane);press(lane);}});
 window.addEventListener('keyup',e=>{const lane=KEYS.indexOf(e.code);if(lane>=0){keys.delete(lane);if(phase==='playing')game.update(time(),held());}});
 const pointerLane=e=>Math.max(0,Math.min(11,Math.floor((e.clientX-canvas.getBoundingClientRect().left)/width*12)));
 const flickLane=x=>x<0||x>=width?-1:Math.floor(x/width*12);
-canvas.addEventListener('pointerdown',e=>{if(phase!=='playing'||(e.pointerType==='mouse'&&e.button!==0))return;e.preventDefault();canvas.setPointerCapture(e.pointerId);const lane=pointerLane(e),x=e.clientX-canvas.getBoundingClientRect().left;pointers.set(e.pointerId,{lane,gesture:new FlickGesture(x,e.clientY,e.timeStamp)});press(lane);});
+canvas.addEventListener('pointerdown',e=>{if(phase!=='playing'||pointers.has(e.pointerId)||(e.pointerType==='mouse'&&e.button!==0))return;e.preventDefault();canvas.setPointerCapture(e.pointerId);const lane=pointerLane(e),x=e.clientX-canvas.getBoundingClientRect().left;pointers.set(e.pointerId,{lane,gesture:new FlickGesture(x,e.clientY,e.timeStamp)});press(lane);});
 const playWorkspace=$('play-workspace'),stage=$('stage'),preventBrowserGesture=event=>event.preventDefault();
 for(const type of ['selectstart','contextmenu','dragstart'])stage.addEventListener(type,preventBrowserGesture);
 for(const type of ['gesturestart','gesturechange','gestureend'])playWorkspace.addEventListener(type,preventBrowserGesture,{passive:false});
@@ -119,7 +119,8 @@ playWorkspace.addEventListener('dblclick',preventBrowserGesture);
 function movePointer(e){
   const p=pointers.get(e.pointerId);if(!p||phase!=='playing')return;
   const lane=pointerLane(e),x=e.clientX-canvas.getBoundingClientRect().left;
-  if(lane!==p.lane){p.lane=lane;press(lane);}
+  // Sliding changes held lanes and can flick, but never creates a new press.
+  if(lane!==p.lane){p.lane=lane;game.update(time(),held());}
   const flick=p.gesture.move(x,e.clientY,e.timeStamp);
   if(flick)game.flick([flickLane(flick.fromX),flickLane(flick.x)],time());
 }

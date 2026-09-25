@@ -133,9 +133,9 @@ export class Game {
     this.auto=auto;this.notes=createChart(chartData);this.totalJudgements=this.notes.reduce((total,n)=>total+n.events.length,0);this.held=new Set();this.lastTime=0;this.combo=0;this.maxCombo=0;this.score=0;this.perfectPlus=0;this.perfect=0;this.great=0;this.good=0;this.bad=0;this.miss=0;this.autoCount=0;this.earned=0;this.onJudge=()=>{};
   }
   covers(n,lane){return this.spanCovers(noteSpanAt(n),lane);}
-  spanCovers(span,lane){const center=lane+.5;return center>=span.lane-EPSILON&&center<span.lane+span.width+EPSILON;}
+  spanCovers(span,lane,padding=0){return Number.isInteger(lane)&&lane>=0&&lane<KEYS.length&&lane>=Math.max(0,span.lane-padding)&&lane<Math.min(KEYS.length,span.lane+span.width+padding);}
   eventSpan(event){return{lane:event.lane,width:event.width};}
-  eventCovers(event,lane){return this.spanCovers(this.eventSpan(event),lane);}
+  eventCovers(event,lane,padding=0){return this.spanCovers(this.eventSpan(event),lane,padding);}
   finishEvent(n,event,grade,at=event.time){
     if(!event||event.state!=='pending'||!grade)return;
     event.state=grade==='MISS'?'miss':'hit';event.grade=grade;event.judgedAt=at;
@@ -157,20 +157,30 @@ export class Game {
     this.earned+=SCORE_MULTIPLIERS[grade]??0;
     this.score=this.totalJudgements?Math.round(this.earned/this.totalJudgements*1000000):0;this.onJudge(grade,n,span,event);
   }
-  isSpanHeld(n,lanes){return this.auto||[...lanes].some(lane=>this.covers(n,lane));}
+  isSpanHeld(n,lanes){return this.auto||[...lanes].some(lane=>this.spanCovers(noteSpanAt(n),lane,1));}
+  // One input resolves one pending event. Near-equal times prefer the actual
+  // note span, then keep the chart/event traversal order as a stable tie-break.
+  selectInputCandidate(input,lanes,t){
+    if(!Number.isFinite(t))return null;
+    let best=null;
+    for(const n of this.notes)for(const event of n.events){
+      if(event.state!=='pending'||event.input!==input)continue;
+      const distance=Math.abs(event.time-t);
+      if(distance>.16+EPSILON||!lanes.some(lane=>this.eventCovers(event,lane,1)))continue;
+      const direct=lanes.some(lane=>this.eventCovers(event,lane));
+      if(!best||distance<best.distance-EPSILON||(Math.abs(distance-best.distance)<=EPSILON&&direct&&!best.direct))best={n,event,distance,direct};
+    }
+    return best;
+  }
   press(lane,t) {
     if(this.auto)return;
-    const candidates=[];
-    for(const n of this.notes)for(const event of n.events)if(event.state==='pending'&&event.input==='press'&&this.eventCovers(event,lane)&&Math.abs(event.time-t)<=.16+EPSILON)candidates.push({n,event});
-    const hit=candidates.sort((a,b)=>Math.abs(a.event.time-t)-Math.abs(b.event.time-t)||a.event.time-b.event.time)[0];
+    const hit=this.selectInputCandidate('press',[lane],t);
     if(hit)this.finishEvent(hit.n,hit.event,timingGrade(hit.event.time-t),t);
   }
   flick(lanes,t) {
     if(this.auto)return;
     this.update(t,this.held);
-    const candidates=[];
-    for(const n of this.notes)for(const event of n.events)if(event.state==='pending'&&event.input==='flick'&&lanes.some(lane=>this.eventCovers(event,lane))&&Math.abs(event.time-t)<=.16+EPSILON)candidates.push({n,event});
-    const hit=candidates.sort((a,b)=>Math.abs(a.event.time-t)-Math.abs(b.event.time-t)||a.event.time-b.event.time)[0];
+    const hit=this.selectInputCandidate('flick',lanes,t);
     if(hit)this.finishEvent(hit.n,hit.event,timingGrade(hit.event.time-t),t);
   }
   update(t,held) {
