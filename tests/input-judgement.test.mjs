@@ -68,7 +68,7 @@ for(const [offset,grade] of [[0,'PERFECT+'],[.025,'PERFECT+'],[.04,'PERFECT'],[.
 
 {
   const game=makeGame([{...tap('left',2),type:'flick'},{...tap('right',3),type:'flick'}]);
-  game.press(3,1);assert.equal(game.perfectPlus,0,'press and flick inputs remain separate');
+  game.press(3,1);assert.equal(game.perfectPlus,0);assert.equal(game.great,1,'press reserves GREAT while flick can upgrade it');
   game.flick([3],1);assert.equal(state(game,'right'),'hit');assert.equal(state(game,'left'),'pending');
   game.flick([1],1);assert.equal(game.perfectPlus,2,'flicks accept adjacent lanes');
 }

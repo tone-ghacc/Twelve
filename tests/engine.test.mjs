@@ -65,7 +65,7 @@ const baseChart=note=>({
   const scratch={id:'scratch',type:'hold',timeMs:1000,durationMs:200,lane:0,width:2,startType:'scratch',checkpoints:[100]};
   const game=new Game(false,baseChart(scratch));
   game.press(0,1);
-  assert.equal(game.perfectPlus,0,'scratch starts do not accept a tap');
+  assert.equal(game.perfectPlus,0);assert.equal(game.great,1,'scratch starts reserve GREAT on tap');
   game.flick([0],1);
   assert.equal(game.perfectPlus,1);
 }

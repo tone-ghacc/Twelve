@@ -139,9 +139,11 @@ export class Game {
   eventCovers(event,lane,padding=0){return this.spanCovers(this.eventSpan(event),lane,padding);}
   finishEvent(n,event,grade,at=event.time){
     if(!event||event.state!=='pending'||!grade)return;
+    const previousGrade=event.provisionalGrade??null;
+    if(previousGrade&&SCORE_MULTIPLIERS[grade]<SCORE_MULTIPLIERS[previousGrade])grade=previousGrade;
     event.state=grade==='MISS'?'miss':'hit';event.grade=grade;event.judgedAt=at;
     if(event.input==='hold'&&grade!=='MISS')n.holdHits++;
-    this.record(n,grade,this.eventSpan(event),event);
+    if(grade!==previousGrade)this.record(n,grade,this.eventSpan(event),event,previousGrade);
     this.updateNoteState(n);
   }
   // Backward-compatible helper for callers that finish a standalone note.
@@ -151,11 +153,12 @@ export class Game {
     if(n.duration&&this.lastTime>=n.time-EPSILON&&this.lastTime<=n.time+n.duration+EPSILON)n.state=this.isSpanHeld(n,this.held)?'holding':'waiting';
     else n.state='pending';
   }
-  record(n,grade,span=noteSpanAt(n),event=null) {
+  record(n,grade,span=noteSpanAt(n),event=null,previousGrade=null) {
     const counter={['PERFECT+']:'perfectPlus',PERFECT:'perfect',GREAT:'great',GOOD:'good',BAD:'bad',MISS:'miss',AUTO:'autoCount'}[grade];
     if(counter)this[counter]++;
-    if(grade==='GOOD'||grade==='BAD'||grade==='MISS')this.combo=0;else{this.combo++;this.maxCombo=Math.max(this.maxCombo,this.combo);}
-    this.earned+=SCORE_MULTIPLIERS[grade]??0;
+    if(previousGrade)this.great--;
+    else if(grade==='GOOD'||grade==='BAD'||grade==='MISS')this.combo=0;else{this.combo++;this.maxCombo=Math.max(this.maxCombo,this.combo);}
+    this.earned+=(SCORE_MULTIPLIERS[grade]??0)-(SCORE_MULTIPLIERS[previousGrade]??0);
     this.score=this.totalJudgements?Math.round(this.earned/this.totalJudgements*1000000):0;this.onJudge(grade,n,span,event);
   }
   isSpanHeld(n,lanes){return this.auto||[...lanes].some(lane=>this.spanCovers(noteSpanAt(n),lane,1));}
@@ -165,7 +168,8 @@ export class Game {
     if(!Number.isFinite(t))return null;
     let best=null;
     for(const n of this.notes)for(const event of n.events){
-      if(event.state!=='pending'||event.input!==input)continue;
+      const accepts=input==='press'?(event.input==='press'||(event.input==='flick'&&!event.provisionalGrade)):event.input===input;
+      if(event.state!=='pending'||!accepts)continue;
       const distance=Math.abs(event.time-t);
       if(distance>.16+EPSILON||!lanes.some(lane=>this.eventCovers(event,lane,1)))continue;
       const direct=lanes.some(lane=>this.eventCovers(event,lane));
@@ -176,7 +180,13 @@ export class Game {
   press(lane,t) {
     if(this.auto)return;
     const hit=this.selectInputCandidate('press',[lane],t);
-    if(hit)this.finishEvent(hit.n,hit.event,timingGrade(hit.event.time-t),t);
+    if(!hit)return;
+    if(hit.event.input==='flick'){
+      // Keep the event pending for a flick, but book its minimum result now so
+      // subsequent notes and combo breaks retain their actual input order.
+      hit.event.provisionalGrade='GREAT';hit.event.provisionalAt=t;
+      this.record(hit.n,'GREAT',this.eventSpan(hit.event),hit.event);
+    }else this.finishEvent(hit.n,hit.event,timingGrade(hit.event.time-t),t);
   }
   flick(lanes,t) {
     if(this.auto)return;
@@ -196,7 +206,7 @@ export class Game {
           const lanes=event.time<t-EPSILON?this.held:currentHeld;
           const heldNow=(acceptedEndFlick&&event.kind==='hold-checkpoint'&&event.time>=acceptedEndFlick.judgedAt-EPSILON)||this.isSpanHeld(n,lanes);
           due.push({n,event,grade:heldNow?'PERFECT':'MISS',at:event.time});
-        }else if((event.input==='press'||event.input==='flick')&&t>event.time+.16+EPSILON)due.push({n,event,grade:'MISS',at:event.time+.16});
+        }else if((event.input==='press'||event.input==='flick')&&t>event.time+.16+EPSILON)due.push({n,event,grade:event.provisionalGrade??'MISS',at:event.time+.16});
       }
     }
     due.sort((a,b)=>a.at-b.at||a.n.id-b.n.id||a.event.id.localeCompare(b.event.id));
