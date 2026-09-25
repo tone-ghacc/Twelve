@@ -29,9 +29,9 @@ export const LABELS = ['Q','W','E','R','T','Y','U','I','O','P','[',']'];
 
 export function createJudgementEvents(note){
   const events=[];
-  const push=(suffix,kind,timeMs,input,span={lane:note.lane,width:note.width})=>events.push({id:`${note.id}:${suffix}`,noteId:note.id,kind,timeMs,input,lane:span.lane,width:span.width,critical:!!note.critical});
+  const push=(suffix,kind,timeMs,input,span={lane:note.lane,width:note.width})=>events.push({id:`${note.id}:${suffix}`,noteId:note.id,kind,timeMs,input,lane:span.lane,width:span.width,critical:input==='press'&&!!note.critical});
   if(!isHoldNote(note)){
-    push('note',note.type==='flick'?(note.critical?'critical-flick':'flick'):(note.critical?'critical-tap':'tap'),note.timeMs,note.type==='flick'?'flick':'press');
+    push('note',note.type==='flick'?'flick':(note.critical?'critical-tap':'tap'),note.timeMs,note.type==='flick'?'flick':'press');
     return events;
   }
   if(note.startType==='normal')push('start',note.critical?'critical-hold-start':'hold-start',note.timeMs,'press');
@@ -70,7 +70,7 @@ export function createDefaultChartData() {
       if(n.startType==='normal'&&holdIndex%2===0)n.critical=true;
       holdIndex++;
     }else{
-      if(index%11===2)n.critical=true;
+      if(n.type==='tap'&&index%11===2)n.critical=true;
       delete n.durationMs;
     }
   }
@@ -95,7 +95,8 @@ export function validateChartData(input) {
     if(!types.has(n.type))throw new Error(`${n.id}: 未対応のノーツ種類です`);
     for(const key of ['timeMs','lane','width'])if(!Number.isInteger(n[key]))throw new Error(`${n.id}: ${key} は整数で指定してください`);
     if(n.timeMs<0||n.timeMs>durationMs||n.lane<0||n.width<1||n.lane+n.width>12)throw new Error(`${n.id}: 時刻またはレーン範囲が不正です`);
-    n.critical=n.critical===true;
+    // Migrate saved charts from the old unsupported Critical Flick variant.
+    n.critical=n.type!=='flick'&&n.critical===true;
     if(isHoldNote(n)){
       if(!Number.isInteger(n.durationMs)||n.durationMs<100||n.timeMs+n.durationMs>durationMs)throw new Error(`${n.id}: ホールド時間が不正です`);
       n.startType=n.startType??'none';

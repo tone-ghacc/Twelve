@@ -77,22 +77,22 @@ function draw(now){
   ctx.save();ctx.beginPath();ctx.moveTo(view.laneX(0,visibleProgress),visibleY);ctx.lineTo(view.laneX(12,visibleProgress),visibleY);ctx.lineTo(width,hitY);ctx.lineTo(width,height);ctx.lineTo(0,height);ctx.lineTo(0,hitY);ctx.closePath();ctx.clip();
   for(const n of game.notes){
     if(n.state==='hit'||n.state==='miss')continue;
-    const isFlickHold=n.type==='flick-hold',purple=n.type==='flick'||isFlickHold,startEvent=n.events.find(event=>event.id.endsWith(':start')),showStart=!n.duration||(n.startType!=='none'&&startEvent?.state==='pending');
+    const isFlickHold=n.type==='flick-hold',purple=n.type==='flick'||isFlickHold||n.startType==='scratch',startEvent=n.events.find(event=>event.id.endsWith(':start')),showStart=!n.duration||(n.startType!=='none'&&startEvent?.state==='pending');
     const startPoint=view.project(n.time,elapsed),endPoint=view.project(n.time+n.duration,elapsed),y=startPoint.y,tail=isFlickHold?Math.min(endPoint.y,hitY):endPoint.y;
     if(y<visibleY-28||tail>height+30)continue;
     const lowerTime=n.duration?Math.max(n.time,Math.min(elapsed,n.time+n.duration)):n.time;
     const lowerSpan=noteSpanAt(n,lowerTime),endSpan=noteSpanAt(n,n.time+n.duration),endFlickSpan=flickSpan(n);
-    const headProjection=view.span(lowerSpan,lowerTime,elapsed,3),endProjection=view.span(endSpan,n.time+n.duration,elapsed,3),flickProjection=view.span(endFlickSpan,n.time+n.duration,elapsed,3),x=headProjection.x,w=headProjection.w,endX=endProjection.x,endW=endProjection.w,flickX=flickProjection.x,flickW=flickProjection.w,head=n.duration?Math.min(headProjection.y,hitY):y,headScale=headProjection.scale,endScale=endProjection.scale,headMetrics=perspectiveMetrics(headScale,playSettings.noteThickness/100),endMetrics=perspectiveMetrics(endScale,playSettings.noteThickness/100);
-    if(n.duration){
-      const tint=isFlickHold?'#b875ff':'#70dcf8',body=ctx.createLinearGradient(0,Math.min(tail,head-1),0,head);body.addColorStop(0,tint+'22');body.addColorStop(1,tint+(n.state==='holding'?'b0':'63'));ctx.fillStyle=body;
-      ctx.beginPath();ctx.moveTo(x,head);ctx.lineTo(x+w,head);ctx.lineTo(endX+endW,tail);ctx.lineTo(endX,tail);ctx.closePath();ctx.fill();
-      ctx.strokeStyle=tint+'7a';ctx.lineWidth=(headMetrics.outlineWidth+endMetrics.outlineWidth)/2;ctx.beginPath();ctx.moveTo(x,head);ctx.lineTo(endX,tail);ctx.moveTo(x+w,head);ctx.lineTo(endX+endW,tail);ctx.stroke();
-      fillProjectedBar(view,endSpan,endProjection,endMetrics.accentHeight*1.5,isFlickHold?'#e5c9ff':'#a0ebff');
+    const headProjection=n.duration?view.spanAtProgress(lowerSpan,Math.min(1,view.progress(lowerTime,elapsed)),3):view.span(lowerSpan,lowerTime,elapsed,3),endProjection=view.holdSpan(endSpan,n.time+n.duration,elapsed,3),flickProjection=view.spanAtProgress(endFlickSpan,Math.min(1,endPoint.p),3),x=headProjection.x,w=headProjection.w,endX=endProjection.x,endW=endProjection.w,flickX=flickProjection.x,flickW=flickProjection.w,head=n.duration?Math.min(headProjection.y,hitY):y,headScale=headProjection.scale,endScale=endProjection.scale,headMetrics=perspectiveMetrics(headScale,playSettings.noteThickness/100),endMetrics=perspectiveMetrics(endScale,playSettings.noteThickness/100);
+    if(n.duration&&headProjection.p>=visibleProgress){
+      const bodyTail=endProjection.y,tint=isFlickHold?'#b875ff':'#70dcf8',body=ctx.createLinearGradient(0,Math.min(bodyTail,head-1),0,head);body.addColorStop(0,tint+'22');body.addColorStop(1,tint+(n.state==='holding'?'b0':'63'));ctx.fillStyle=body;
+      ctx.beginPath();ctx.moveTo(x,head);ctx.lineTo(x+w,head);ctx.lineTo(endX+endW,bodyTail);ctx.lineTo(endX,bodyTail);ctx.closePath();ctx.fill();
+      ctx.strokeStyle=tint+'7a';ctx.lineWidth=(headMetrics.outlineWidth+endMetrics.outlineWidth)/2;ctx.beginPath();ctx.moveTo(x,head);ctx.lineTo(endX,bodyTail);ctx.moveTo(x+w,head);ctx.lineTo(endX+endW,bodyTail);ctx.stroke();
+      if(endPoint.p>=visibleProgress&&endPoint.p<=1)fillProjectedBar(view,endSpan,endProjection,endMetrics.accentHeight*1.5,isFlickHold?'#e5c9ff':'#a0ebff');
     }
     const color=n.critical?'#ffd94a':purple?'#b875ff':n.duration?'#70dcf8':'#ff4e64';
     if(showStart){const headHeight=headMetrics.noteHeight;ctx.shadowColor=color;ctx.shadowBlur=headMetrics.shadowBlur*(n.state==='holding'?1.65:.85);if(n.duration){fillProjectedBar(view,lowerSpan,headProjection,headHeight,color);const accentPoint={...headProjection,y:headProjection.y-headHeight/2+headMetrics.accentHeight/2,p:headProjection.p+(-headHeight/2+headMetrics.accentHeight/2)/Math.max(1,hitY-topY)};fillProjectedBar(view,lowerSpan,accentPoint,headMetrics.accentHeight,n.critical?'#fff2a5':purple?'#e5c9ff':'#c5f4ff');}else{ctx.fillStyle=color;ctx.fillRect(x,head-headHeight/2,w,headHeight);ctx.fillStyle=n.critical?'#fff2a5':purple?'#e5c9ff':'#ffb1bb';ctx.fillRect(x,head-headHeight/2,w,headMetrics.accentHeight);}ctx.shadowBlur=0;}
     if(showStart&&(n.type==='flick'||n.startType==='scratch'))drawFlickArrows(x,head,w,headScale,n.critical?'#fff7bd':'#d8b1ff');
-    if(isFlickHold){
+    if(isFlickHold&&endPoint.y>=visibleY-28){
       const flickHeight=endMetrics.noteHeight;ctx.shadowColor='#b875ff';ctx.shadowBlur=endMetrics.shadowBlur;fillProjectedBar(view,endFlickSpan,flickProjection,flickHeight,'#b875ff');const accentPoint={...flickProjection,y:flickProjection.y-flickHeight/2+endMetrics.accentHeight/2,p:flickProjection.p+(-flickHeight/2+endMetrics.accentHeight/2)/Math.max(1,hitY-topY)};fillProjectedBar(view,endFlickSpan,accentPoint,endMetrics.accentHeight,'#e5c9ff');ctx.shadowBlur=0;drawFlickArrows(flickX,tail,flickW,endScale);
     }
   }

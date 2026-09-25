@@ -47,6 +47,10 @@ export function createPerspective(width,height,settings={}){
   const laneScale=p=>topScale+(1-topScale)*p;
   const laneX=(lane,p)=>width/2+(lane/12-.5)*width*laneScale(p);
   const project=(at,elapsed)=>{const p=progress(at,elapsed);return{p,y:topY+(hitY-topY)*p,scale:laneScale(p)};};
-  const span=(noteSpan,at,elapsed,inset=0)=>{const point=project(at,elapsed),left=laneX(noteSpan.lane,point.p),right=laneX(noteSpan.lane+noteSpan.width,point.p),safeInset=clamp(inset*point.scale,0,Math.max(0,(right-left)*.22));return{...point,x:left+safeInset,w:Math.max(0,right-left-safeInset*2)};};
-  return{hitY,judgementTop,judgementBottom,judgementHeight,judgementTopProgress,judgementBottomProgress,stageBottomProgress,bottomGap,topY,travel,fullTravelTimeMs,visibleTimeMs,visibleLinear,visibleProgress,visibleY,noteSpeed,noteStartPosition,topScale,depthPower,entrySlope,progress,laneScale,laneX,project,span};
+  const spanAtProgress=(noteSpan,p,inset=0)=>{const point={p,y:topY+(hitY-topY)*p,scale:laneScale(p)},left=laneX(noteSpan.lane,p),right=laneX(noteSpan.lane+noteSpan.width,p),safeInset=clamp(inset*point.scale,0,Math.max(0,(right-left)*.22));return{...point,x:left+safeInset,w:Math.max(0,right-left-safeInset*2)};};
+  const span=(noteSpan,at,elapsed,inset=0)=>spanAtProgress(noteSpan,progress(at,elapsed),inset);
+  // Clip depth before computing widths: far-offscreen endpoints can otherwise
+  // have negative scale and distort even the visible portion of a long hold.
+  const holdSpan=(noteSpan,at,elapsed,inset=0)=>spanAtProgress(noteSpan,clamp(progress(at,elapsed),visibleProgress,1),inset);
+  return{hitY,judgementTop,judgementBottom,judgementHeight,judgementTopProgress,judgementBottomProgress,stageBottomProgress,bottomGap,topY,travel,fullTravelTimeMs,visibleTimeMs,visibleLinear,visibleProgress,visibleY,noteSpeed,noteStartPosition,topScale,depthPower,entrySlope,progress,laneScale,laneX,project,span,spanAtProgress,holdSpan};
 }
