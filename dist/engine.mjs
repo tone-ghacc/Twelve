@@ -1,4 +1,4 @@
-import {validateFixedKeyboardSections,prepareFixedKeyboardChart,FixedKeyboardTimeline} from './fixed-keyboard.mjs';
+import {validateFixedKeyboardNotes,validateFixedKeyboardSections,prepareFixedKeyboardChart,FixedKeyboardTimeline} from './fixed-keyboard.mjs';
 
 export const HOLD_INTERVAL = 0.1;
 export const HOLD_INTERVAL_MS = Math.round(HOLD_INTERVAL * 1000);
@@ -82,7 +82,7 @@ export function createDefaultChartData() {
   return {schemaVersion:1,metadata:{title:'First light',artist:'TWELVE',difficulty:'DEMO',laneCount:12,durationMs:40000},timing:{bpm:120,bpmChanges:[{timeMs:20000,bpm:180}],offsetMs:0,timeSignature:[4,4]},notes};
 }
 
-export function validateChartData(input) {
+export function validateChartData(input,{checkFixedKeyboardNotes=true}={}) {
   if(!input||input.schemaVersion!==1||!Array.isArray(input.notes))throw new Error('schemaVersion 1 の譜面JSONを指定してください');
   const chart=structuredClone(input),ids=new Set(),types=new Set(['tap','flick','hold','flick-hold']);
   const durationMs=Number(chart.metadata?.durationMs??40000);if(!Number.isInteger(durationMs)||durationMs<1000||durationMs>86400000)throw new Error('譜面の長さは1秒〜24時間の整数msで指定してください');
@@ -119,6 +119,7 @@ export function validateChartData(input) {
   const incoming=new Set();
   for(const n of chart.notes){if(!n.nextId)continue;const next=chart.notes.find(x=>x.id===n.nextId);if(!next||!isHoldNote(n)||!isHoldNote(next))throw new Error(`${n.id}: 接続先はホールドにしてください`);if(incoming.has(next.id))throw new Error(`${next.id}: 複数のノーツからは接続できません`);incoming.add(next.id);const span=n.type==='flick-hold'?n.endFlick:n;if(next.timeMs!==n.timeMs+n.durationMs||next.lane<span.lane||next.lane+next.width>span.lane+span.width)throw new Error(`${n.id}: 接続先を終点時刻と範囲内に配置してください`);}
   for(const start of chart.notes){const seen=new Set();let n=start;while(n?.nextId){if(seen.has(n.id))throw new Error('連結を循環させることはできません');seen.add(n.id);n=chart.notes.find(x=>x.id===n.nextId);}}
+  if(checkFixedKeyboardNotes)validateFixedKeyboardNotes(chart);
   chart.notes.sort((a,b)=>a.timeMs-b.timeMs||a.lane-b.lane||a.id.localeCompare(b.id));return chart;
 }
 

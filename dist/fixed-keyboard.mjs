@@ -1,6 +1,6 @@
 const LANES=12;
-export const FIXED_KEYBOARD_SWEEP_SECONDS=.85;
-const identity=()=>Array.from({length:LANES},(_,lane)=>lane);
+export const FIXED_KEYBOARD_SWEEP_SECONDS=.65;
+const identity=(count=LANES)=>Array.from({length:count},(_,lane)=>lane);
 export function keyboardGroups(widths){let lane=0;return widths.map(width=>{const group={lane,width};lane+=width;return group;});}
 export function defaultKeyboardWidths(count){
   if(!Number.isInteger(count)||count<1||count>6)throw new Error('分割数は1〜6で指定してください');
@@ -25,31 +25,33 @@ export function validateFixedKeyboardSections(value,durationMs){
   return sections;
 }
 const shuffle=(values,rng)=>{const result=[...values];for(let i=result.length-1;i>0;i--){const j=Math.floor(rng()*(i+1));[result[i],result[j]]=[result[j],result[i]];}return result;};
-const lanesOf=span=>Array.from({length:span.width},(_,i)=>span.lane+i);
 const spansOf=note=>[note,...(note.endFlick?[note.endFlick]:[])];
+export const matchingKeyboardGroup=(groups,span)=>groups.findIndex(group=>group.lane===span.lane&&group.width===span.width);
 
-// A bounded search over a 12-element bijection. Every authored span must stay
-// contiguous, which also preserves containment of linked hold endpoints.
-export function createLanePermutation(spans,pinned=new Set(),rng=Math.random){
-  const uniqueSpans=[...new Map(spans.map(span=>[`${span.lane}:${span.width}`,span])).values()];
-  const constraints=uniqueSpans.map(lanesOf).filter(lanes=>lanes.length>1&&lanes.length<LANES);
-  const map=Array(LANES).fill(-1),used=new Set(pinned);
-  for(const lane of pinned)map[lane]=lane;
-  const order=identity().filter(lane=>!pinned.has(lane)).sort((a,b)=>constraints.filter(c=>c.includes(b)).length-constraints.filter(c=>c.includes(a)).length);
-  let attempts=0;
-  const valid=()=>constraints.every(lanes=>{const assigned=lanes.map(lane=>map[lane]).filter(lane=>lane>=0);return !assigned.length||Math.max(...assigned)-Math.min(...assigned)<lanes.length;});
-  const visit=index=>{
-    if(index===order.length)return true;
-    if(++attempts>12000)return false;
-    const lane=order[index];
-    for(const target of shuffle(identity().filter(n=>!used.has(n)),rng)){
-      map[lane]=target;used.add(target);
-      if(valid()&&visit(index+1))return true;
-      used.delete(target);map[lane]=-1;
+export function validateFixedKeyboardNotes(chart){
+  const byId=new Map(chart.notes.map(n=>[n.id,n]));
+  for(const section of chart.fixedKeyboardSections){
+    const groups=keyboardGroups(section.widths),contains=time=>time>=section.startMs&&time<section.endMs;
+    const requireGroup=(span,n,label)=>{
+      const index=matchingKeyboardGroup(groups,span);
+      if(index<0)throw new Error(`${n.id}: 固定鍵盤区間 ${section.id} の${label}は1つの鍵盤の左端・幅に一致させてください（${groups.map(g=>`レーン${g.lane+1}〜${g.lane+g.width}・幅${g.width}`).join(' / ')}）`);
+      return index;
+    };
+    for(const n of chart.notes){
+      const end=n.timeMs+(n.durationMs||0);
+      if(n.timeMs<section.endMs&&end>=section.startMs)requireGroup(n,n,n.durationMs?'ホールド本体':'ノーツ');
+      if(n.endFlick&&contains(end))requireGroup(n.endFlick,n,'終点フリック');
+      if(n.nextId&&contains(end)){
+        const next=byId.get(n.nextId),sourceGroup=requireGroup(n,n,'連結元'),endGroup=requireGroup(n.endFlick??n,n,'連結終点'),nextGroup=requireGroup(next,next,'連結先');
+        if(sourceGroup!==endGroup||sourceGroup!==nextGroup)throw new Error(`${n.id} → ${next.id}: 固定鍵盤区間 ${section.id} では異なる鍵盤をまたぐ連結はできません`);
+      }
     }
-    return false;
-  };
-  return visit(0)?map:identity();
+  }
+}
+
+export function createGroupPermutation(count,pinned=new Set(),rng=Math.random){
+  const map=identity(count),movable=map.filter(index=>!pinned.has(index)),targets=shuffle(movable,rng);
+  movable.forEach((source,index)=>{map[source]=targets[index];});return map;
 }
 
 export function prepareFixedKeyboardChart(chart,randomize=false,rng=Math.random){
@@ -67,15 +69,15 @@ export function prepareFixedKeyboardChart(chart,randomize=false,rng=Math.random)
   }
   const sections=chart.fixedKeyboardSections.map(section=>{
     const intersects=n=>n.timeMs<section.endMs&&n.timeMs+(n.durationMs||0)>=section.startMs;
-    const relevant=chart.notes.filter(intersects),pinned=new Set();
-    for(const n of relevant)if(stationary.has(n.id)||sectionFor(n)!==section)for(const span of spansOf(n))for(const lane of lanesOf(span))pinned.add(lane);
-    const permutation=randomize?createLanePermutation(relevant.flatMap(spansOf),pinned,rng):identity();
-    return{...section,groups:keyboardGroups(section.widths),permutation};
+    const relevant=chart.notes.filter(intersects),groups=keyboardGroups(section.widths),pinned=new Set();
+    for(const n of relevant)if(stationary.has(n.id)||sectionFor(n)!==section)for(const span of spansOf(n))groups.forEach((group,index)=>{if(span.lane<group.lane+group.width&&span.lane+span.width>group.lane)pinned.add(index);});
+    const groupPermutation=randomize?createGroupPermutation(groups.length,pinned,rng):identity(groups.length);
+    return{...section,groups,groupPermutation};
   });
   for(const note of notes){
     const section=sections.find(s=>note.timeMs>=s.startMs&&note.timeMs+(note.durationMs||0)<s.endMs);
     if(!section||stationary.has(note.id))continue;
-    for(const span of spansOf(note))span.lane=Math.min(...lanesOf(span).map(lane=>section.permutation[lane]));
+    for(const span of spansOf(note)){const source=matchingKeyboardGroup(section.groups,span),target=section.groups[section.groupPermutation[source]];Object.assign(span,target);}
   }
   return{chart:{...chart,notes},sections};
 }
