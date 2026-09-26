@@ -1,3 +1,5 @@
+import {validateFixedKeyboardSections,prepareFixedKeyboardChart,FixedKeyboardTimeline} from './fixed-keyboard.mjs';
+
 export const HOLD_INTERVAL = 0.1;
 export const HOLD_INTERVAL_MS = Math.round(HOLD_INTERVAL * 1000);
 export const FLICK_HANDOFF_SECONDS = .16;
@@ -91,6 +93,7 @@ export function validateChartData(input) {
   const rawBpmChanges=chart.timing?.bpmChanges??[];if(!Array.isArray(rawBpmChanges))throw new Error('BPM変更は配列で指定してください');
   const bpmChangeTimes=new Set(),bpmChanges=rawBpmChanges.map((change,index)=>{const timeMs=Number(change?.timeMs),nextBpm=Number(change?.bpm);if(!Number.isInteger(timeMs)||timeMs<=0||timeMs>=durationMs)throw new Error(`BPM変更 ${index+1}: 時刻は譜面の途中の整数msで指定してください`);if(!Number.isFinite(nextBpm)||nextBpm<20||nextBpm>400)throw new Error(`BPM変更 ${index+1}: BPMは20〜400で指定してください`);if(bpmChangeTimes.has(timeMs))throw new Error(`BPM変更 ${index+1}: 同じ時刻に複数のBPMは設定できません`);bpmChangeTimes.add(timeMs);return{timeMs,bpm:nextBpm};}).sort((a,b)=>a.timeMs-b.timeMs);
   chart.timing={bpm,bpmChanges,offsetMs,timeSignature:[...timeSignature]};
+  chart.fixedKeyboardSections=validateFixedKeyboardSections(chart.fixedKeyboardSections,durationMs);
   for(const n of chart.notes){
     if(!n||typeof n.id!=='string'||!n.id||ids.has(n.id))throw new Error('ノーツIDは重複しない文字列にしてください');ids.add(n.id);
     if(!types.has(n.type))throw new Error(`${n.id}: 未対応のノーツ種類です`);
@@ -131,8 +134,10 @@ export function createChart(chartData=createDefaultChartData()) {
 }
 
 export class Game {
-  constructor(auto=false,chartData=createDefaultChartData()) {
-    this.auto=auto;this.notes=createChart(chartData);this.totalJudgements=this.notes.reduce((total,n)=>total+n.events.length,0);this.held=new Set();this.lastTime=0;this.combo=0;this.maxCombo=0;this.score=0;this.perfectPlus=0;this.perfect=0;this.great=0;this.good=0;this.bad=0;this.miss=0;this.autoCount=0;this.earned=0;this.onJudge=()=>{};
+  constructor(auto=false,chartData=createDefaultChartData(),{randomizeFixedKeyboard=false,rng=Math.random}={}) {
+    const prepared=prepareFixedKeyboardChart(validateChartData(chartData),randomizeFixedKeyboard,rng);
+    this.fixedKeyboard=new FixedKeyboardTimeline(prepared.sections);
+    this.auto=auto;this.notes=createChart(prepared.chart);this.totalJudgements=this.notes.reduce((total,n)=>total+n.events.length,0);this.held=new Set();this.lastTime=0;this.combo=0;this.maxCombo=0;this.score=0;this.perfectPlus=0;this.perfect=0;this.great=0;this.good=0;this.bad=0;this.miss=0;this.autoCount=0;this.earned=0;this.onJudge=()=>{};
     this.pointers=new Map();this.handoffs=new Map();this.notesById=new Map(this.notes.map(n=>[n.sourceId,n]));
   }
   covers(n,lane){return this.spanCovers(noteSpanAt(n),lane);}
@@ -216,6 +221,7 @@ export class Game {
   }
   update(t,held,pointers=this.pointers) {
     if(t<this.lastTime-EPSILON)return;
+    this.fixedKeyboard.update(t);
     const currentHeld=new Set(held),currentPointers=this.pointerSnapshot(pointers),due=[];
     for(const n of this.notes){
       const acceptedEndFlick=n.events.find(event=>event.kind==='flick-end'&&event.state==='hit')??[...this.handoffs.values()].find(handoff=>handoff.sourceId===n.sourceId);

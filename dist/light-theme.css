@@ -68,4 +68,8 @@ input[role=switch]{background:#becbd8}input[role=switch]:checked{background:var(
 .inspector-head{align-items:flex-start}.inspector-head h2{flex-shrink:0}.inspector-head span{min-width:0;overflow-wrap:anywhere;text-align:right}
 .inspector fieldset,.inspector label,.inspector .field-pair{min-width:0}.inspector .field-pair{grid-template-columns:repeat(2,minmax(0,1fr))}
 #multi-selection p{line-height:1.7;color:#596c80}#multi-selection #selection-count{color:#203047;font-weight:600}#multi-selection button{width:100%;margin-top:10px}
+.fixed-keyboard-list{display:flex;flex-direction:column;gap:12px;margin-bottom:12px}
+.fixed-keyboard-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0;padding:10px;border:1px solid #c9d9e8;border-radius:5px}
+.fixed-keyboard-row legend{max-width:100%;overflow-wrap:anywhere;padding:0 4px;font-size:12px;color:#52687f}
+.fixed-keyboard-row .danger-button{grid-column:1 / -1;font-size:12px;padding:7px}
 @media(max-width:920px){.editor-grid{--timeline-height:55vh}.timeline-panel{width:100%}.inspector{height:auto;max-height:65vh;width:100%}.tool-palette{width:100%}}
