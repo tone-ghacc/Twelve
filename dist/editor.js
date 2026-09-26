@@ -1,4 +1,4 @@
-import {createDefaultChartData,validateChartData,createJudgementEvents,defaultHoldCheckpoints,isHoldNote} from './engine.mjs';
+import {createDefaultChartData,validateChartData,createJudgementEvents,defaultHoldCheckpoints,isHoldNote,HOLD_INTERVAL_MS} from './engine.mjs';
 
 const $=id=>document.getElementById(id),TYPES={tap:'タップ','critical-tap':'Criticalタップ',flick:'フリック',hold:'ホールド','flick-hold':'フリックホールド'};
 const isHold=isHoldNote;
@@ -20,6 +20,34 @@ export function snapToMeasureDivision(value,timing,division,min=0,max=Number.POS
 export function snapHoldDuration(startTimeMs,endTimeMs,timing,division,minDuration,maxDuration){const snappedEnd=snapToMeasureDivision(endTimeMs,timing,division,startTimeMs+minDuration,startTimeMs+maxDuration);return snappedEnd-startTimeMs;}
 export function laneSpanFromDrag(startLane,endLane){const a=Math.max(0,Math.min(11,Math.trunc(startLane))),b=Math.max(0,Math.min(11,Math.trunc(endLane)));return{lane:Math.min(a,b),width:Math.abs(a-b)+1};}
 export function chartAuditionEvents(chart){return chart.notes.flatMap(n=>createJudgementEvents(n).map(event=>({timeMs:event.timeMs,type:event.kind,lane:event.lane}))).sort((a,b)=>a.timeMs-b.timeMs);}
+
+// Build and validate a separate chart; failed connections never mutate the
+// current chart, including any existing links or custom checkpoint timings.
+export function connectEditorHolds(chart,sourceId,targetId){
+  const next=structuredClone(chart),source=next.notes.find(n=>n.id===sourceId);
+  if(!source||!isHold(source))throw new Error('連結元はホールド／フリックホールドを選択してください');
+  if(!targetId){delete source.nextId;return validateChartData(next);}
+  const target=next.notes.find(n=>n.id===targetId);
+  if(!target||!isHold(target))throw new Error('接続先はホールド／フリックホールドを選択してください');
+  if(source===target)throw new Error('同じノーツ自身には連結できません');
+  const incoming=next.notes.find(n=>n.id!==sourceId&&n.nextId===targetId);
+  if(incoming)throw new Error(`${targetId}: すでに ${incoming.id} から連結されています`);
+  const seen=new Set([sourceId]);let cursor=target;
+  while(cursor){if(seen.has(cursor.id))throw new Error('連結先から元のノーツへ戻る循環は作れません');seen.add(cursor.id);cursor=next.notes.find(n=>n.id===cursor.nextId);}
+  const span=source.type==='flick-hold'?source.endFlick:source;
+  if(target.lane<span.lane||target.lane>=span.lane+span.width)throw new Error(`${targetId}: 左端レーンが連結元の終点範囲（${span.lane+1}〜${span.lane+span.width}）の外にあります`);
+  if(target.lane+target.width>span.lane+span.width)throw new Error(`${targetId}: ノーツ幅 ${target.width} の右端が連結元の終点範囲（${span.lane+1}〜${span.lane+span.width}）を超えています`);
+  const endTime=source.timeMs+source.durationMs,gap=target.timeMs-endTime;
+  if(gap<0)throw new Error(`${targetId}: 始点 ${target.timeMs}ms が連結元の終点 ${endTime}ms より前にあり、時間範囲が重なっています`);
+  if(gap>0){
+    const checkpoints=(target.checkpoints??defaultHoldCheckpoints(target.durationMs)).map(offset=>offset+gap);
+    for(let offset=HOLD_INTERVAL_MS;offset<=gap;offset+=HOLD_INTERVAL_MS)checkpoints.push(offset);
+    target.checkpoints=checkpoints.sort((a,b)=>a-b);
+    target.timeMs=endTime;target.durationMs+=gap;
+  }
+  source.nextId=targetId;
+  return validateChartData(next);
+}
 
 export function notesInEditorRect(notes,start,end,{laneW,x,y}){
   const left=Math.min(start.x,end.x),right=Math.max(start.x,end.x),top=Math.min(start.y,end.y),bottom=Math.max(start.y,end.y);
@@ -198,7 +226,13 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
     if(n.type==='flick-hold')n.endFlick=oldType==='flick-hold'?{lane:Number($('flick-lane').value)-1,width:Number($('flick-width').value)}:{lane:n.lane,width:n.width};else delete n.endFlick;
     save(next);
   }
-  for(const id of ['note-type','note-critical','note-time','note-duration','note-lane','note-width','hold-start-type','hold-checkpoints','flick-lane','flick-width','note-next'])$(id).addEventListener('change',commitInspector);
+  for(const id of ['note-type','note-critical','note-time','note-duration','note-lane','note-width','hold-start-type','hold-checkpoints','flick-lane','flick-width'])$(id).addEventListener('change',commitInspector);
+  $('note-next').addEventListener('change',()=>{
+    const source=noteById(selectedId);if(!source)return;
+    const targetId=$('note-next').value,target=noteById(targetId),gap=target?target.timeMs-source.timeMs-source.durationMs:0;
+    try{const next=connectEditorHolds(chart,source.id,targetId),message=!targetId?'連結を解除しました':gap>0?`${targetId} の始点を ${gap}ms 延長して連結しました（終点は維持）`:`${targetId} に連結しました`;if(!save(next,message))renderInspector();}
+    catch(error){renderInspector();setStatus(error.message,'error');}
+  });
   function deleteSelection(){if(!selectedIds.size)return;const removed=new Set(selectedIds),next=structuredClone(chart);next.notes=next.notes.filter(n=>!removed.has(n.id));for(const n of next.notes)if(removed.has(n.nextId))delete n.nextId;if(save(next,`${removed.size}個のノーツを削除しました`)){select(null);setStatus(`${removed.size}個のノーツを削除しました`,'ok');}}
   $('delete-note').addEventListener('click',deleteSelection);$('delete-selection').addEventListener('click',deleteSelection);$('clear-selection').addEventListener('click',()=>select(null));
 
