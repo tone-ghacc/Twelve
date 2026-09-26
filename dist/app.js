@@ -38,13 +38,22 @@ function showOverlay(label,title,description,button){$('overlay').style.display=
 function reset(){silence();elapsed=0;keys.clear();pointers.clear();effects.length=0;newGame();setPhase('ready');$('score').textContent='0000000';$('combo-box').style.display='none';showJudgement();showOverlay('12 LANES. YOUR RHYTHM.','リズムを、つかもう。','赤はタップ。黄はCritical。水色は長押し。紫はフリック。','▶ プレイする');}
 function resultSummary(){return `PERFECT+ ${game.perfectPlus} · PERFECT ${game.perfect} · GREAT ${game.great}\nGOOD ${game.good} · BAD ${game.bad} · MISS ${game.miss}${game.autoCount?` · AUTO ${game.autoCount}`:''}\nSCORE ${String(game.score).padStart(7,'0')} · MAX COMBO ${game.maxCombo}`;}
 function end(){silence();elapsed=chartDuration();setPhase('ended');keys.clear();pointers.clear();showOverlay(game.auto?'AUTO PLAY COMPLETE':'PLAY COMPLETE',game.auto?'譜面再生が完了しました':'おつかれさま！',resultSummary(),'↺ もう一度プレイ');}
-function drawFlickArrows(x,y,w,scale=1,color='#d8b1ff'){
-  const metrics=perspectiveMetrics(scale,playSettings.noteThickness/100),half=w/2,count=Math.max(1,Math.floor(half/Math.max(3,13*scale))),spacing=half/count,chevronW=Math.min(6*scale,spacing*.48),center=x+half,cy=y-metrics.arrowOffset;
-  ctx.strokeStyle=color;ctx.lineWidth=metrics.outlineWidth;ctx.lineJoin='round';ctx.lineCap='round';ctx.beginPath();
+function drawFlickArrows(x,y,w,scale=1){
+  if(w<=0||scale<=0)return;
+  const metrics=perspectiveMetrics(scale,playSettings.noteThickness/100),half=w/2,count=Math.max(1,Math.floor(half/(18*scale))),spacing=half/count,chevronW=Math.min(10*scale,spacing*.7),band=Math.min(3.5*scale,chevronW*.42),center=x+half;
+  // An upright billboard at the note's depth: vertical offsets never change
+  // lane position or perspective scale, unlike a shape laid on the lane plane.
+  const bottom=y-metrics.noteHeight/2-3*scale,top=bottom-22*scale,cy=(top+bottom)/2;
+  ctx.save();ctx.lineJoin='round';
+  const fill=ctx.createLinearGradient(0,top,0,bottom);fill.addColorStop(0,'#ffffff');fill.addColorStop(.55,'#f8edff');fill.addColorStop(1,'#dca8ff');
+  ctx.beginPath();
   for(const direction of [-1,1])for(let i=0;i<count;i++){
-    const tip=center+direction*(spacing*(i+.78));ctx.moveTo(tip-direction*chevronW,cy-metrics.arrowHeight);ctx.lineTo(tip,cy);ctx.lineTo(tip-direction*chevronW,cy+metrics.arrowHeight);
+    const tip=center+direction*spacing*(i+.88),back=tip-direction*chevronW;
+    ctx.moveTo(back,top);ctx.lineTo(back+direction*band,top);ctx.lineTo(tip,cy);ctx.lineTo(back+direction*band,bottom);ctx.lineTo(back,bottom);ctx.lineTo(tip-direction*band,cy);ctx.closePath();
   }
-  ctx.stroke();ctx.lineCap='butt';
+  ctx.strokeStyle='#361154';ctx.lineWidth=3*scale;ctx.stroke();
+  ctx.shadowColor='#b95cff';ctx.shadowBlur=9*scale;ctx.strokeStyle='#c377ff';ctx.lineWidth=1.2*scale;ctx.stroke();ctx.fillStyle=fill;ctx.fill();
+  ctx.restore();
 }
 function projectedBar(view,span,point,height,inset=3){
   const depth=Math.max(1,view.hitY-view.topY),edge=offset=>{const p=point.p+offset/depth,scale=view.laneScale(p),left=view.laneX(span.lane,p),right=view.laneX(span.lane+span.width,p),safeInset=Math.max(0,Math.min(inset*scale,(right-left)*.22));return{left:left+safeInset,right:right-safeInset,y:point.y+offset};};
@@ -75,6 +84,7 @@ function draw(now){
   drawKeyBeams(view,now);
   const fadeEnd=Math.min(hitY,visibleY+58),topFade=ctx.createLinearGradient(0,visibleY,0,Math.max(visibleY+1,fadeEnd));topFade.addColorStop(0,'#090f18');topFade.addColorStop(1,'#090f1800');
   ctx.save();ctx.beginPath();ctx.moveTo(view.laneX(0,visibleProgress),visibleY);ctx.lineTo(view.laneX(12,visibleProgress),visibleY);ctx.lineTo(width,hitY);ctx.lineTo(width,height);ctx.lineTo(0,height);ctx.lineTo(0,hitY);ctx.closePath();ctx.clip();
+  const flickIndicators=[];
   for(const n of game.notes){
     if(n.state==='hit'||n.state==='miss')continue;
     const isFlickHold=n.type==='flick-hold',purple=n.type==='flick'||isFlickHold||n.startType==='scratch',startEvent=n.events.find(event=>event.id.endsWith(':start')),showStart=!n.duration||(n.startType!=='none'&&startEvent?.state==='pending');
@@ -91,11 +101,16 @@ function draw(now){
     }
     const color=n.critical?'#ffd94a':purple?'#b875ff':n.duration?'#70dcf8':'#ff4e64';
     if(showStart){const headHeight=headMetrics.noteHeight;ctx.shadowColor=color;ctx.shadowBlur=headMetrics.shadowBlur*(n.state==='holding'?1.65:.85);if(n.duration){fillProjectedBar(view,lowerSpan,headProjection,headHeight,color);const accentPoint={...headProjection,y:headProjection.y-headHeight/2+headMetrics.accentHeight/2,p:headProjection.p+(-headHeight/2+headMetrics.accentHeight/2)/Math.max(1,hitY-topY)};fillProjectedBar(view,lowerSpan,accentPoint,headMetrics.accentHeight,n.critical?'#fff2a5':purple?'#e5c9ff':'#c5f4ff');}else{ctx.fillStyle=color;ctx.fillRect(x,head-headHeight/2,w,headHeight);ctx.fillStyle=n.critical?'#fff2a5':purple?'#e5c9ff':'#ffb1bb';ctx.fillRect(x,head-headHeight/2,w,headMetrics.accentHeight);}ctx.shadowBlur=0;}
-    if(showStart&&(n.type==='flick'||n.startType==='scratch'))drawFlickArrows(x,head,w,headScale,n.critical?'#fff7bd':'#d8b1ff');
+    if(showStart&&(n.type==='flick'||n.startType==='scratch'))flickIndicators.push([x,head,w,headScale]);
     if(isFlickHold&&endPoint.y>=visibleY-28){
-      const flickHeight=endMetrics.noteHeight;ctx.shadowColor='#b875ff';ctx.shadowBlur=endMetrics.shadowBlur;fillProjectedBar(view,endFlickSpan,flickProjection,flickHeight,'#b875ff');const accentPoint={...flickProjection,y:flickProjection.y-flickHeight/2+endMetrics.accentHeight/2,p:flickProjection.p+(-flickHeight/2+endMetrics.accentHeight/2)/Math.max(1,hitY-topY)};fillProjectedBar(view,endFlickSpan,accentPoint,endMetrics.accentHeight,'#e5c9ff');ctx.shadowBlur=0;drawFlickArrows(flickX,tail,flickW,endScale);
+      const flickHeight=endMetrics.noteHeight;ctx.shadowColor='#b875ff';ctx.shadowBlur=endMetrics.shadowBlur;fillProjectedBar(view,endFlickSpan,flickProjection,flickHeight,'#b875ff');const accentPoint={...flickProjection,y:flickProjection.y-flickHeight/2+endMetrics.accentHeight/2,p:flickProjection.p+(-flickHeight/2+endMetrics.accentHeight/2)/Math.max(1,hitY-topY)};fillProjectedBar(view,endFlickSpan,accentPoint,endMetrics.accentHeight,'#e5c9ff');ctx.shadowBlur=0;flickIndicators.push([flickX,tail,flickW,flickProjection.scale]);
     }
   }
+  ctx.restore();
+  // Upright marks can extend above the sloping outer lane edges. Clip to the
+  // visible screen region instead of cutting them against the floor trapezoid.
+  ctx.save();ctx.beginPath();ctx.rect(0,visibleY,width,Math.max(0,height-visibleY));ctx.clip();
+  for(const indicator of flickIndicators)drawFlickArrows(...indicator);
   ctx.restore();
   ctx.fillStyle=topFade;ctx.fillRect(0,visibleY,width,Math.max(1,fadeEnd-visibleY));
   const glow=ctx.createLinearGradient(0,judgementTop-12,0,judgementTop+judgementHeight+12);glow.addColorStop(0,'#b9f78d00');glow.addColorStop(.5,'#b9f78d18');glow.addColorStop(1,'#b9f78d00');ctx.fillStyle=glow;ctx.fillRect(0,judgementTop-12,width,judgementHeight+24);
