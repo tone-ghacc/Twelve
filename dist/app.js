@@ -94,11 +94,11 @@ function draw(now){
   for(const n of game.notes){
     if(n.state==='hit'||n.state==='miss')continue;
     const isFlickHold=n.type==='flick-hold',purple=n.type==='flick'||isFlickHold||n.startType==='scratch',startEvent=n.events.find(event=>event.id.endsWith(':start')),showStart=!n.duration||(n.startType!=='none'&&startEvent?.state==='pending');
-    const startPoint=view.project(n.time,elapsed),endPoint=view.project(n.time+n.duration,elapsed),y=startPoint.y,tail=isFlickHold?Math.min(endPoint.y,hitY):endPoint.y;
+    const startPoint=view.project(n.time,elapsed),endPoint=view.project(n.time+n.duration,elapsed),y=startPoint.y,tail=endPoint.y;
     if(y<visibleY-28||tail>height+30)continue;
     const lowerTime=n.duration?Math.max(n.time,Math.min(elapsed,n.time+n.duration)):n.time;
     const lowerSpan=noteSpanAt(n,lowerTime),endSpan=noteSpanAt(n,n.time+n.duration),endFlickSpan=flickSpan(n);
-    const headProjection=n.duration?view.spanAtProgress(lowerSpan,Math.min(1,view.progress(lowerTime,elapsed)),3):view.span(lowerSpan,lowerTime,elapsed,3),endProjection=view.holdSpan(endSpan,n.time+n.duration,elapsed,3),flickProjection=view.spanAtProgress(endFlickSpan,Math.min(1,endPoint.p),3),x=headProjection.x,w=headProjection.w,endX=endProjection.x,endW=endProjection.w,flickX=flickProjection.x,flickW=flickProjection.w,head=n.duration?Math.min(headProjection.y,hitY):y,headScale=headProjection.scale,endScale=endProjection.scale,headMetrics=perspectiveMetrics(headScale,playSettings.noteThickness/100),endMetrics=perspectiveMetrics(endScale,playSettings.noteThickness/100);
+    const headProjection=n.duration?view.spanAtProgress(lowerSpan,Math.min(1,view.progress(lowerTime,elapsed)),3):view.span(lowerSpan,lowerTime,elapsed,3),endProjection=view.holdSpan(endSpan,n.time+n.duration,elapsed,3),flickProjection=view.spanAtProgress(endFlickSpan,endPoint.p,3),x=headProjection.x,w=headProjection.w,endX=endProjection.x,endW=endProjection.w,flickX=flickProjection.x,flickW=flickProjection.w,head=n.duration?Math.min(headProjection.y,hitY):y,headScale=headProjection.scale,endScale=endProjection.scale,headMetrics=perspectiveMetrics(headScale,playSettings.noteThickness/100),endMetrics=perspectiveMetrics(endScale,playSettings.noteThickness/100);
     if(n.duration&&headProjection.p>=visibleProgress){
       const bodyTail=endProjection.y,tint=isFlickHold?'#b875ff':'#70dcf8',body=ctx.createLinearGradient(0,Math.min(bodyTail,head-1),0,head);body.addColorStop(0,tint+'22');body.addColorStop(1,tint+(n.state==='holding'?'b0':'63'));ctx.fillStyle=body;
       ctx.beginPath();ctx.moveTo(x,head);ctx.lineTo(x+w,head);ctx.lineTo(endX+endW,bodyTail);ctx.lineTo(endX,bodyTail);ctx.closePath();ctx.fill();
@@ -106,10 +106,18 @@ function draw(now){
       if(endPoint.p>=visibleProgress&&endPoint.p<=1)fillProjectedBar(view,endSpan,endProjection,endMetrics.accentHeight*1.5,isFlickHold?'#e5c9ff':'#a0ebff');
     }
     const color=n.critical?'#ffd94a':purple?'#b875ff':n.duration?'#70dcf8':'#ff4e64';
-    if(showStart){const headHeight=headMetrics.noteHeight;ctx.shadowColor=color;ctx.shadowBlur=headMetrics.shadowBlur*(n.state==='holding'?1.65:.85);if(n.duration){fillProjectedBar(view,lowerSpan,headProjection,headHeight,color);const accentPoint={...headProjection,y:headProjection.y-headHeight/2+headMetrics.accentHeight/2,p:headProjection.p+(-headHeight/2+headMetrics.accentHeight/2)/Math.max(1,hitY-topY)};fillProjectedBar(view,lowerSpan,accentPoint,headMetrics.accentHeight,n.critical?'#fff2a5':purple?'#e5c9ff':'#c5f4ff');}else{ctx.fillStyle=color;ctx.fillRect(x,head-headHeight/2,w,headHeight);ctx.fillStyle=n.critical?'#fff2a5':purple?'#e5c9ff':'#ffb1bb';ctx.fillRect(x,head-headHeight/2,w,headMetrics.accentHeight);}ctx.shadowBlur=0;}
-    if(showStart&&(n.type==='flick'||n.startType==='scratch'))flickIndicators.push([x,head,w,headScale]);
+    if(showStart){
+      // Pending start caps keep moving through the line. Only the sustained
+      // body is trimmed at judgement; a cap is not a held finger indicator.
+      const cap=view.span(lowerSpan,n.time,elapsed,3),metrics=perspectiveMetrics(cap.scale,playSettings.noteThickness/100),capHeight=metrics.noteHeight;
+      ctx.shadowColor=color;ctx.shadowBlur=metrics.shadowBlur*(n.state==='holding'?1.65:.85);
+      if(n.duration){fillProjectedBar(view,lowerSpan,cap,capHeight,color);const offset=-capHeight/2+metrics.accentHeight/2,accent={...cap,y:cap.y+offset,p:cap.p+offset/Math.max(1,hitY-topY)};fillProjectedBar(view,lowerSpan,accent,metrics.accentHeight,n.critical?'#fff2a5':purple?'#e5c9ff':'#c5f4ff');}
+      else{ctx.fillStyle=color;ctx.fillRect(cap.x,cap.y-capHeight/2,cap.w,capHeight);ctx.fillStyle=n.critical?'#fff2a5':purple?'#e5c9ff':'#ffb1bb';ctx.fillRect(cap.x,cap.y-capHeight/2,cap.w,metrics.accentHeight);}
+      ctx.shadowBlur=0;
+      if(n.type==='flick'||n.startType==='scratch')flickIndicators.push([cap.x,cap.y,cap.w,cap.scale]);
+    }
     if(isFlickHold&&endPoint.y>=visibleY-28){
-      const flickHeight=endMetrics.noteHeight;ctx.shadowColor='#b875ff';ctx.shadowBlur=endMetrics.shadowBlur;fillProjectedBar(view,endFlickSpan,flickProjection,flickHeight,'#b875ff');const accentPoint={...flickProjection,y:flickProjection.y-flickHeight/2+endMetrics.accentHeight/2,p:flickProjection.p+(-flickHeight/2+endMetrics.accentHeight/2)/Math.max(1,hitY-topY)};fillProjectedBar(view,endFlickSpan,accentPoint,endMetrics.accentHeight,'#e5c9ff');ctx.shadowBlur=0;flickIndicators.push([flickX,tail,flickW,flickProjection.scale]);
+      const metrics=perspectiveMetrics(flickProjection.scale,playSettings.noteThickness/100),flickHeight=metrics.noteHeight;ctx.shadowColor='#b875ff';ctx.shadowBlur=metrics.shadowBlur;fillProjectedBar(view,endFlickSpan,flickProjection,flickHeight,'#b875ff');const accentPoint={...flickProjection,y:flickProjection.y-flickHeight/2+metrics.accentHeight/2,p:flickProjection.p+(-flickHeight/2+metrics.accentHeight/2)/Math.max(1,hitY-topY)};fillProjectedBar(view,endFlickSpan,accentPoint,metrics.accentHeight,'#e5c9ff');ctx.shadowBlur=0;flickIndicators.push([flickX,tail,flickW,flickProjection.scale]);
     }
   }
   ctx.restore();

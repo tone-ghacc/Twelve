@@ -40,8 +40,15 @@ export function perspectiveMetrics(scale,thickness=1){
 
 export function createPerspective(width,height,settings={}){
   const noteSpeed=validateNoteSpeed(settings.noteSpeed??10),noteStartPosition=validateNoteStartPosition(settings.noteStartPosition??50),visibleTimeMs=getNoteVisibleTimeMs(noteSpeed,noteStartPosition),fullTravelTimeMs=getNoteVisibleTimeMs(noteSpeed,0),travel=Math.max(.001,fullTravelTimeMs/1000),visibleLinear=fullTravelTimeMs?clamp(1-visibleTimeMs/fullTravelTimeMs,0,1):1;
-  const judgementHeight=Math.max(18,Math.min(80,width/24)),hitY=height*.8,bottomGap=height-hitY-judgementHeight/2,judgementTop=hitY-judgementHeight/2,judgementBottom=judgementTop+judgementHeight,topY=0,judgementTopProgress=(judgementTop-topY)/(hitY-topY),judgementBottomProgress=(judgementBottom-topY)/(hitY-topY),stageBottomProgress=(height-topY)/(hitY-topY),topScale=1/6,depthPower=2.2,entrySlope=.28,exitSlope=entrySlope+(1-entrySlope)*depthPower;
-  const projectProgress=linear=>linear<0?linear*entrySlope:linear<=1?entrySlope*linear+(1-entrySlope)*Math.pow(linear,depthPower):1+(linear-1)*exitSlope;
+  const judgementHeight=Math.max(18,Math.min(80,width/24)),hitY=height*.8,bottomGap=height-hitY-judgementHeight/2,judgementTop=hitY-judgementHeight/2,judgementBottom=judgementTop+judgementHeight,topY=0,judgementTopProgress=(judgementTop-topY)/(hitY-topY),judgementBottomProgress=(judgementBottom-topY)/(hitY-topY),stageBottomProgress=(height-topY)/(hitY-topY),topScale=1/6;
+  // Keep screen travel per apparent lane width constant: dp/dq = k * scale,
+  // scale = topScale + (1-topScale)*p. Unlike the old power easing, this does
+  // not lose speed relative to the growing notes as they approach judgement.
+  const depthRate=Math.log(1/topScale),entrySlope=topScale*depthRate/(1-topScale);
+  // Continue the same curve through judgement. Switch to its tangent only
+  // beyond the visible screen, avoiding overflow for long-running holds.
+  const exitProgress=stageBottomProgress+.1,exitScale=topScale+(1-topScale)*exitProgress,exitLinear=1+Math.log(exitScale)/depthRate,exitSlope=exitScale*depthRate/(1-topScale);
+  const projectProgress=linear=>linear<=exitLinear?topScale*Math.expm1(depthRate*linear)/(1-topScale):exitProgress+(linear-exitLinear)*exitSlope;
   const progress=(at,elapsed)=>projectProgress(1-(at-elapsed)/travel);
   const visibleProgress=projectProgress(visibleLinear),visibleY=topY+(hitY-topY)*visibleProgress;
   const laneScale=p=>topScale+(1-topScale)*p;
@@ -52,5 +59,5 @@ export function createPerspective(width,height,settings={}){
   // Clip depth before computing widths: far-offscreen endpoints can otherwise
   // have negative scale and distort even the visible portion of a long hold.
   const holdSpan=(noteSpan,at,elapsed,inset=0)=>spanAtProgress(noteSpan,clamp(progress(at,elapsed),visibleProgress,1),inset);
-  return{hitY,judgementTop,judgementBottom,judgementHeight,judgementTopProgress,judgementBottomProgress,stageBottomProgress,bottomGap,topY,travel,fullTravelTimeMs,visibleTimeMs,visibleLinear,visibleProgress,visibleY,noteSpeed,noteStartPosition,topScale,depthPower,entrySlope,progress,laneScale,laneX,project,span,spanAtProgress,holdSpan};
+  return{hitY,judgementTop,judgementBottom,judgementHeight,judgementTopProgress,judgementBottomProgress,stageBottomProgress,bottomGap,topY,travel,fullTravelTimeMs,visibleTimeMs,visibleLinear,visibleProgress,visibleY,noteSpeed,noteStartPosition,topScale,depthRate,entrySlope,progress,laneScale,laneX,project,span,spanAtProgress,holdSpan};
 }
