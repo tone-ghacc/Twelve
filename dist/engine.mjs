@@ -1,5 +1,6 @@
 import {validateFixedKeyboardNotes,validateFixedKeyboardSections,prepareFixedKeyboardChart,FixedKeyboardTimeline} from './fixed-keyboard.mjs';
 
+export const MIN_HOLD_DURATION_MS = 1;
 export const HOLD_INTERVAL = 0.1;
 export const HOLD_INTERVAL_MS = Math.round(HOLD_INTERVAL * 1000);
 export const FLICK_HANDOFF_SECONDS = .16;
@@ -102,7 +103,7 @@ export function validateChartData(input,{checkFixedKeyboardNotes=true}={}) {
     // Migrate saved charts from the old unsupported Critical Flick variant.
     n.critical=n.type!=='flick'&&n.critical===true;
     if(isHoldNote(n)){
-      if(!Number.isInteger(n.durationMs)||n.durationMs<100||n.timeMs+n.durationMs>durationMs)throw new Error(`${n.id}: ホールド時間が不正です`);
+      if(!Number.isInteger(n.durationMs)||n.durationMs<MIN_HOLD_DURATION_MS||n.timeMs+n.durationMs>durationMs)throw new Error(`${n.id}: ホールド時間は1ms以上の整数で、終点を譜面内に指定してください`);
       n.startType=n.startType??'none';
       if(!HOLD_START_TYPES.includes(n.startType))throw new Error(`${n.id}: startType は none / normal / scratch で指定してください`);
       if(n.startType==='scratch'&&n.critical)throw new Error(`${n.id}: スクラッチ始点にCritical属性は設定できません`);

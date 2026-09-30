@@ -1,4 +1,4 @@
-import {createDefaultChartData,validateChartData,createJudgementEvents,defaultHoldCheckpoints,isHoldNote,HOLD_INTERVAL_MS} from './engine.mjs';
+import {createDefaultChartData,validateChartData,createJudgementEvents,defaultHoldCheckpoints,isHoldNote,HOLD_INTERVAL_MS,MIN_HOLD_DURATION_MS} from './engine.mjs';
 import {defaultKeyboardWidths,keyboardGroups} from './fixed-keyboard.mjs';
 
 const $=id=>document.getElementById(id),TYPES={tap:'タップ','critical-tap':'Criticalタップ',flick:'フリック',hold:'ホールド','flick-hold':'フリックホールド'};
@@ -162,7 +162,7 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
   function renderInspector(){
     selectedIds=new Set([...selectedIds].filter(id=>noteById(id)));selectedId=selectedIds.size===1?[...selectedIds][0]:null;
     const multi=selectedIds.size>1,n=noteById(selectedId);empty.hidden=!!n||multi;form.hidden=!n;$('multi-selection').hidden=!multi;$('selection-count').textContent=`${selectedIds.size}個のノーツを選択中`;$('selected-id').textContent=multi?`${selectedIds.size}個選択`:n?n.id:'未選択';if(!n)return;
-    $('note-type').value=n.type;$('note-critical').checked=!!n.critical;$('note-critical').disabled=n.type==='flick'||(isHold(n)&&n.startType==='scratch');$('note-time').max=durationMs();$('note-time').value=n.timeMs;$('note-duration').max=Math.max(100,durationMs()-n.timeMs);$('note-duration').value=n.durationMs||1000;$('note-lane').value=n.lane+1;$('note-width').value=n.width;
+    $('note-type').value=n.type;$('note-critical').checked=!!n.critical;$('note-critical').disabled=n.type==='flick'||(isHold(n)&&n.startType==='scratch');$('note-time').max=durationMs();$('note-time').value=n.timeMs;$('note-duration').max=Math.max(MIN_HOLD_DURATION_MS,durationMs()-n.timeMs);$('note-duration').value=n.durationMs||1000;$('note-lane').value=n.lane+1;$('note-width').value=n.width;
     $('hold-judgement-fields').hidden=!isHold(n);$('hold-start-type').value=n.startType??'none';$('hold-checkpoints').value=(n.checkpoints??[]).join(', ');$('flick-end-fields').hidden=n.type!=='flick-hold';$('next-field').hidden=!isHold(n);$('note-duration').disabled=!isHold(n);
     $('flick-lane').value=(n.endFlick?.lane??n.lane)+1;$('flick-width').value=n.endFlick?.width??n.width;
     const next=$('note-next'),value=n.nextId||'';next.replaceChildren(new Option('なし',''));for(const x of chart.notes.filter(x=>x.id!==n.id&&isHold(x)))next.add(new Option(`${x.id} · ${(x.timeMs/1000).toFixed(2)}s · ${noteLabel(x)}`,x.id));next.value=value;
@@ -196,7 +196,7 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
       const laneDelta=clamp(Math.round((px-drag.startX)/laneW),-minLane,12-maxLane),targetTime=snapTime(origin.timeMs+pointTime(py)-pointTime(drag.startY),origin.timeMs-minTime,origin.timeMs+durationMs()-maxTime),timeDelta=targetTime-origin.timeMs;
       for(const item of next.notes.filter(x=>ids.has(x.id))){item.timeMs+=timeDelta;item.lane+=laneDelta;if(item.endFlick)item.endFlick.lane+=laneDelta;}
     }else if(drag.mode==='duration'){
-      const descendants=drag.downstream,currentLatest=Math.max(origin.timeMs+origin.durationMs,...drag.members.filter(x=>descendants.includes(x.id)).map(x=>x.timeMs+(x.durationMs||0))),maxDuration=origin.durationMs+durationMs()-currentLatest,newDuration=snapHoldDuration(origin.timeMs,pointTime(py),chart.timing,snapDivision,100,maxDuration),delta=newDuration-origin.durationMs;n.checkpoints=resizedCheckpoints(origin,newDuration);n.durationMs=newDuration;for(const item of next.notes.filter(x=>descendants.includes(x.id)))item.timeMs+=delta;
+      const descendants=drag.downstream,currentLatest=Math.max(origin.timeMs+origin.durationMs,...drag.members.filter(x=>descendants.includes(x.id)).map(x=>x.timeMs+(x.durationMs||0))),maxDuration=origin.durationMs+durationMs()-currentLatest,newDuration=snapHoldDuration(origin.timeMs,pointTime(py),chart.timing,snapDivision,MIN_HOLD_DURATION_MS,maxDuration),delta=newDuration-origin.durationMs;n.checkpoints=resizedCheckpoints(origin,newDuration);n.durationMs=newDuration;for(const item of next.notes.filter(x=>descendants.includes(x.id)))item.timeMs+=delta;
     }else{
       const endFlick=drag.mode.startsWith('flick-'),target=endFlick?n.endFlick:n,originalTarget=endFlick?origin.endFlick:origin,limits=drag.limits,boundary=Math.round((px-gutter)/laneW);
       if(drag.mode.endsWith('left')){const right=originalTarget.lane+originalTarget.width;target.lane=clamp(boundary,limits.minLeft,Math.min(right-1,limits.requiredLeft));target.width=right-target.lane;}
