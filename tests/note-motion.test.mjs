@@ -16,7 +16,7 @@ for(const [width,height] of [[360,640],[1200,700]])for(const noteSpeed of [1,10,
     assert.ok(velocity>0);assert.ok(velocity>=previousSpeed-1e-5,'screen speed never decreases on approach');previousSpeed=velocity;
     // The old power easing fails this: velocity / apparent lane width fell
     // by ~20% in the second half even though pixel velocity increased.
-    close(velocity/point.scale,(view.hitY-view.topY)/view.travel*view.depthRate/(1-view.topScale),1e-4);
+    close(velocity/point.scale,(view.hitY-view.topY)/view.travel*view.depthRate/(view.judgementWidth*(1-view.topScale)),1e-4);
     close(view.span({lane:2,width:3},judge,time).y,point.y);
   }
   const before=(view.project(judge,judge).y-view.project(judge,judge-dt).y)/dt,after=(view.project(judge,judge+dt).y-view.project(judge,judge).y)/dt;

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import {Game,FlickGesture,KEYS} from '../dist/engine.mjs';
+import {createPerspective} from '../dist/projection.mjs';
 
 const tap=(id,lane,timeMs=1000,width=1)=>({id,type:'tap',lane,width,timeMs});
 const chart=notes=>({schemaVersion:1,metadata:{durationMs:5000},timing:{bpm:120},notes});
@@ -104,8 +105,14 @@ assert.ok(inputSource.includes("canvas.addEventListener('pointermove',movePointe
 function inputHarness(notes){
   const target=()=>({handlers:new Map(),addEventListener(type,fn){this.handlers.set(type,fn);},setPointerCapture(){},getBoundingClientRect(){return{left:0};},emit(type,extra={}){this.handlers.get(type)?.({type,button:0,pointerType:'touch',pointerId:1,clientY:600,timeStamp:now*1000,preventDefault(){},target:{matches:()=>false},...extra});}});
   let now=0;const game=makeGame(notes),canvas=target(),window=target(),keys=new Set(),pointers=new Map(),elements={'play-workspace':target(),stage:target(),'editor-workspace':{hidden:true}};
-  vm.runInNewContext(inputSource,{game,canvas,window,keys,pointers,KEYS,FlickGesture,width:1200,phase:'playing',time:()=>now,held:()=>new Set([...keys,...[...pointers.values()].map(p=>p.lane)]),$:id=>elements[id]});
-  return{game,pointers,keys,pointer(type,lane,t,id=1){now=t;canvas.emit(type,{clientX:(lane+.5)*100,pointerId:id});},key(type,lane,t,repeat=false){now=t;window.emit(type,{code:KEYS[lane],repeat});}};
+  const view=createPerspective(1200,700);
+  vm.runInNewContext(inputSource,{game,canvas,window,keys,pointers,KEYS,FlickGesture,createPerspective,width:1200,height:700,playSettings:{},phase:'playing',time:()=>now,held:()=>new Set([...keys,...[...pointers.values()].map(p=>p.lane)]),$:id=>elements[id]});
+  return{game,pointers,keys,pointer(type,lane,t,id=1){now=t;canvas.emit(type,{clientX:view.laneX(lane+.5,1),pointerId:id});},key(type,lane,t,repeat=false){now=t;window.emit(type,{code:KEYS[lane],repeat});}};
+}
+for(const lane of [0,1,10,11]){
+  const input=inputHarness([tap('edge',lane)]);input.pointer('pointerdown',lane,1);
+  assert.equal(input.pointers.get(1).lane,lane,'pointer maps to the rendered judgement lane, not the full canvas');
+  assert.equal(input.game.perfectPlus,1);
 }
 {
   const input=inputHarness([tap('target',2)]);

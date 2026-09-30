@@ -3,6 +3,9 @@ const clamp=(value,min,max)=>Math.max(min,Math.min(max,value));
 export const NOTE_SPEED_MIN=1;
 export const NOTE_SPEED_MAX=25;
 export const NOTE_SPEED_STEP=.1;
+// Widths relative to the bottom of the stage. Straight perspective edges
+// determine the judgement height from these three ratios.
+export const STAGE_PERSPECTIVE=Object.freeze({farWidth:.10,judgementWidth:.78,nearWidth:1});
 export const NOTE_START_POSITIONS=Object.freeze(Array.from({length:21},(_,index)=>index*5));
 export const NOTE_DISTANCE=Object.freeze({
   0:7400,5:7050,10:20000/3,15:6300,20:17800/3,25:16700/3,30:15550/3,
@@ -35,14 +38,19 @@ export function getNoteSpawnTimeMs(judgeTimeMs,noteSpeed,noteStartPosition){
 }
 
 export function perspectiveMetrics(scale,thickness=1){
-  const value=clamp(scale,.2,1.15),size=clamp(Number(thickness)||1,.5,2);return{noteHeight:12*value*size,accentHeight:Math.max(.5,2*value*size),outlineWidth:Math.max(.75,2*value),arrowOffset:(10+6*size)*value,arrowHeight:Math.max(1.5,4*value),shadowBlur:12*value,tickHeight:Math.max(.75,value)};
+  const value=clamp(scale,.05,1.15),size=clamp(Number(thickness)||1,.5,2);return{noteHeight:12*value*size,accentHeight:Math.max(.5,2*value*size),outlineWidth:Math.max(.75,2*value),arrowOffset:(10+6*size)*value,arrowHeight:Math.max(1.5,4*value),shadowBlur:12*value,tickHeight:Math.max(.75,value)};
 }
 
 export function createPerspective(width,height,settings={}){
   const noteSpeed=validateNoteSpeed(settings.noteSpeed??10),noteStartPosition=validateNoteStartPosition(settings.noteStartPosition??50),visibleTimeMs=getNoteVisibleTimeMs(noteSpeed,noteStartPosition),fullTravelTimeMs=getNoteVisibleTimeMs(noteSpeed,0),travel=Math.max(.001,fullTravelTimeMs/1000),visibleLinear=fullTravelTimeMs?clamp(1-visibleTimeMs/fullTravelTimeMs,0,1):1;
-  const judgementHeight=Math.max(18,Math.min(80,width/24)),hitY=height*.8,bottomGap=height-hitY-judgementHeight/2,judgementTop=hitY-judgementHeight/2,judgementBottom=judgementTop+judgementHeight,topY=0,judgementTopProgress=(judgementTop-topY)/(hitY-topY),judgementBottomProgress=(judgementBottom-topY)/(hitY-topY),stageBottomProgress=(height-topY)/(hitY-topY),topScale=1/6;
+  const {farWidth,judgementWidth,nearWidth}=STAGE_PERSPECTIVE;
+  const judgementYRatio=(judgementWidth-farWidth)/(nearWidth-farWidth);
+  const judgementHeight=Math.max(18,Math.min(80,width*judgementWidth/24)),hitY=height*judgementYRatio,bottomGap=height-hitY-judgementHeight/2,judgementTop=hitY-judgementHeight/2,judgementBottom=judgementTop+judgementHeight,topY=0,judgementTopProgress=(judgementTop-topY)/(hitY-topY),judgementBottomProgress=(judgementBottom-topY)/(hitY-topY),stageBottomProgress=(height-topY)/(hitY-topY),topScale=farWidth/judgementWidth;
   // Keep screen travel per apparent lane width constant: dp/dq = k * scale,
-  // scale = topScale + (1-topScale)*p. Unlike the old power easing, this does
+  // relative scale = topScale + (1-topScale)*p (judgement width is 1).
+  // Absolute widths below are normalized to the stage bottom. This curve
+  // uses the existing movement model with the updated perspective ratio.
+  // Unlike the old power easing, this does
   // not lose speed relative to the growing notes as they approach judgement.
   const depthRate=Math.log(1/topScale),entrySlope=topScale*depthRate/(1-topScale);
   // Continue the same curve through judgement. Switch to its tangent only
@@ -51,13 +59,20 @@ export function createPerspective(width,height,settings={}){
   const projectProgress=linear=>linear<=exitLinear?topScale*Math.expm1(depthRate*linear)/(1-topScale):exitProgress+(linear-exitLinear)*exitSlope;
   const progress=(at,elapsed)=>projectProgress(1-(at-elapsed)/travel);
   const visibleProgress=projectProgress(visibleLinear),visibleY=topY+(hitY-topY)*visibleProgress;
-  const laneScale=p=>topScale+(1-topScale)*p;
+  const laneScale=p=>farWidth+(judgementWidth-farWidth)*p;
   const laneX=(lane,p)=>width/2+(lane/12-.5)*width*laneScale(p);
+  // Input stays on the judgement row, independently of pointer Y. Preserve
+  // clamped edge presses and reject out-of-row flick endpoints as before.
+  const laneAtX=(x,clampEdges=false)=>{
+    if(!Number.isFinite(x)||width<=0)return -1;
+    const lane=Math.floor((x-laneX(0,1))/(width*judgementWidth)*12);
+    return clampEdges?clamp(lane,0,11):lane<0||lane>=12?-1:lane;
+  };
   const project=(at,elapsed)=>{const p=progress(at,elapsed);return{p,y:topY+(hitY-topY)*p,scale:laneScale(p)};};
   const spanAtProgress=(noteSpan,p,inset=0)=>{const point={p,y:topY+(hitY-topY)*p,scale:laneScale(p)},left=laneX(noteSpan.lane,p),right=laneX(noteSpan.lane+noteSpan.width,p),safeInset=clamp(inset*point.scale,0,Math.max(0,(right-left)*.22));return{...point,x:left+safeInset,w:Math.max(0,right-left-safeInset*2)};};
   const span=(noteSpan,at,elapsed,inset=0)=>spanAtProgress(noteSpan,progress(at,elapsed),inset);
   // Clip depth before computing widths: far-offscreen endpoints can otherwise
   // have negative scale and distort even the visible portion of a long hold.
   const holdSpan=(noteSpan,at,elapsed,inset=0)=>spanAtProgress(noteSpan,clamp(progress(at,elapsed),visibleProgress,1),inset);
-  return{hitY,judgementTop,judgementBottom,judgementHeight,judgementTopProgress,judgementBottomProgress,stageBottomProgress,bottomGap,topY,travel,fullTravelTimeMs,visibleTimeMs,visibleLinear,visibleProgress,visibleY,noteSpeed,noteStartPosition,topScale,depthRate,entrySlope,progress,laneScale,laneX,project,span,spanAtProgress,holdSpan};
+  return{hitY,judgementTop,judgementBottom,judgementHeight,judgementTopProgress,judgementBottomProgress,stageBottomProgress,bottomGap,topY,travel,fullTravelTimeMs,visibleTimeMs,visibleLinear,visibleProgress,visibleY,noteSpeed,noteStartPosition,farWidth,judgementWidth,nearWidth,judgementYRatio,topScale,depthRate,entrySlope,progress,laneScale,laneX,laneAtX,project,span,spanAtProgress,holdSpan};
 }

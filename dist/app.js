@@ -76,7 +76,7 @@ function drawKeyBeams(view,now){
   }
 }
 function draw(now){
-  const laneW=width/12,view=createPerspective(width,height,playSettings),{hitY,judgementTop,judgementBottom,judgementHeight,judgementTopProgress,judgementBottomProgress,stageBottomProgress,topY,travel,visibleY,visibleProgress}=view;
+  const view=createPerspective(width,height,playSettings),laneW=(view.laneX(1,1)-view.laneX(0,1)),{hitY,judgementTop,judgementBottom,judgementHeight,judgementTopProgress,judgementBottomProgress,stageBottomProgress,topY,travel,visibleY,visibleProgress}=view;
   const keyboardTime=elapsed+(phase==='ended'?(now-endedAt)/1000:0);if(phase!=='ready')game.fixedKeyboard.update(keyboardTime);
   ctx.clearRect(0,0,width,height);ctx.fillStyle='#090f18';ctx.fillRect(0,0,width,height);
   const active=held(),judgementCell=lane=>({topLeft:view.laneX(lane,judgementTopProgress),topRight:view.laneX(lane+1,judgementTopProgress),bottomLeft:view.laneX(lane,judgementBottomProgress),bottomRight:view.laneX(lane+1,judgementBottomProgress)}),traceJudgementCell=cell=>{ctx.beginPath();ctx.moveTo(cell.topLeft,judgementTop);ctx.lineTo(cell.topRight,judgementTop);ctx.lineTo(cell.bottomRight,judgementBottom);ctx.lineTo(cell.bottomLeft,judgementBottom);ctx.closePath();};if(game.auto&&phase==='playing')for(const n of game.notes)if(n.state==='holding'){const span=noteSpanAt(n,elapsed),from=Math.max(0,Math.floor(span.lane)),to=Math.min(12,Math.ceil(span.lane+span.width));for(let l=from;l<to;l++)active.add(l);}
@@ -89,7 +89,7 @@ function draw(now){
   drawFixedKeyboardStage(ctx,view,game.fixedKeyboard,keyboardTime,{lines:false});
   drawKeyBeams(view,now);
   const fadeEnd=Math.min(hitY,visibleY+58),topFade=ctx.createLinearGradient(0,visibleY,0,Math.max(visibleY+1,fadeEnd));topFade.addColorStop(0,'#090f18');topFade.addColorStop(1,'#090f1800');
-  ctx.save();ctx.beginPath();ctx.moveTo(view.laneX(0,visibleProgress),visibleY);ctx.lineTo(view.laneX(12,visibleProgress),visibleY);ctx.lineTo(width,hitY);ctx.lineTo(width,height);ctx.lineTo(0,height);ctx.lineTo(0,hitY);ctx.closePath();ctx.clip();
+  ctx.save();ctx.beginPath();ctx.moveTo(view.laneX(0,visibleProgress),visibleY);ctx.lineTo(view.laneX(12,visibleProgress),visibleY);ctx.lineTo(view.laneX(12,stageBottomProgress),height);ctx.lineTo(view.laneX(0,stageBottomProgress),height);ctx.closePath();ctx.clip();
   const flickIndicators=[];
   for(const n of game.notes){
     if(n.state==='hit'||n.state==='miss')continue;
@@ -130,16 +130,16 @@ function draw(now){
   // Partition borders belong to the stage, not the note entrance fade.
   drawFixedKeyboardStage(ctx,view,game.fixedKeyboard,keyboardTime,{groups:false});
   drawFixedKeyboardSweeps(ctx,view,game.fixedKeyboard,keyboardTime);
-  const glow=ctx.createLinearGradient(0,judgementTop-12,0,judgementTop+judgementHeight+12);glow.addColorStop(0,'#b9f78d00');glow.addColorStop(.5,'#b9f78d18');glow.addColorStop(1,'#b9f78d00');ctx.fillStyle=glow;ctx.fillRect(0,judgementTop-12,width,judgementHeight+24);
-  for(let i=effects.length-1;i>=0;i--){const e=effects[i],age=(now-e.start)/450;if(age>=1){effects.splice(i,1);continue;}ctx.globalAlpha=(1-age)*.8;ctx.strokeStyle=e.critical?'#ffd94a':e.flick?'#c68aff':e.hold?'#70dcf8':'#ff8291';ctx.lineWidth=2;ctx.strokeRect(e.lane*laneW+3-age*5,hitY-7-age*23,e.width*laneW-6+age*10,14+age*46);ctx.globalAlpha=1;}
+  const glow=ctx.createLinearGradient(0,judgementTop-12,0,judgementTop+judgementHeight+12);glow.addColorStop(0,'#b9f78d00');glow.addColorStop(.5,'#b9f78d18');glow.addColorStop(1,'#b9f78d00');fillProjectedBar(view,{lane:0,width:12},{p:1,y:hitY},judgementHeight+24,glow,0);
+  for(let i=effects.length-1;i>=0;i--){const e=effects[i],age=(now-e.start)/450;if(age>=1){effects.splice(i,1);continue;}ctx.globalAlpha=(1-age)*.8;ctx.strokeStyle=e.critical?'#ffd94a':e.flick?'#c68aff':e.hold?'#70dcf8':'#ff8291';ctx.lineWidth=2;ctx.strokeRect(view.laneX(e.lane,1)+3-age*5,hitY-7-age*23,e.width*laneW-6+age*10,14+age*46);ctx.globalAlpha=1;}
   for(let l=0;l<12;l++){const cell=judgementCell(l),labelX=(cell.topLeft+cell.topRight+cell.bottomLeft+cell.bottomRight)/4;ctx.strokeStyle=active.has(l)?'#b9f78d':'#607287';ctx.lineWidth=active.has(l)?2:1.25;traceJudgementCell(cell);ctx.stroke();ctx.fillStyle=active.has(l)?'#d9ffbd':'#aab7c7';ctx.font=`600 ${Math.max(11,Math.min(16,laneW*.38))}px sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(LABELS[l],labelX,judgementTop+judgementHeight*.72);}ctx.textBaseline='alphabetic';
 }
 function frame(now){if(phase==='playing'){elapsed=time();game.update(elapsed,held(),pointers);for(const p of pointers.values())p.gesture.rest(now);if(!externalTrack)schedule();if(elapsed>=chartDuration())end();}if(now>judgeUntil)$('judgement').textContent='';draw(now);if(now-frameTime>100){$('elapsed').textContent=formatTime(Math.max(0,elapsed));frameTime=now;}requestAnimationFrame(frame);}
 function press(lane){if(phase==='playing'){const t=time();game.update(t,held(),pointers);game.press(lane,t);}}
 window.addEventListener('keydown',e=>{if(e.code==='Escape'&&!playbackMenuPanel.hidden){e.preventDefault();setPlaybackMenu(false);playbackMenuToggle.focus();return;}if(e.code==='Escape'&&playbackSection.classList.contains('theater-mode')){e.preventDefault();setTheaterMode(false);playbackMenuToggle.focus();return;}if(!$('editor-workspace').hidden||e.target.matches('input,select,button,a,textarea'))return;if(e.code==='Space'){e.preventDefault();if(!e.repeat){if(phase==='playing')pause();else if(phase==='paused')resume();else start();}return;}const lane=KEYS.indexOf(e.code);if(lane<0)return;e.preventDefault();if(!e.repeat&&!keys.has(lane)){keys.add(lane);press(lane);}});
 window.addEventListener('keyup',e=>{const lane=KEYS.indexOf(e.code);if(lane>=0){keys.delete(lane);if(phase==='playing')game.update(time(),held(),pointers);}});
-const pointerLane=e=>Math.max(0,Math.min(11,Math.floor((e.clientX-canvas.getBoundingClientRect().left)/width*12)));
-const flickLane=x=>x<0||x>=width?-1:Math.floor(x/width*12);
+const pointerLane=e=>createPerspective(width,height,playSettings).laneAtX(e.clientX-canvas.getBoundingClientRect().left,true);
+const flickLane=x=>createPerspective(width,height,playSettings).laneAtX(x);
 canvas.addEventListener('pointerdown',e=>{if(phase!=='playing'||pointers.has(e.pointerId)||(e.pointerType==='mouse'&&e.button!==0))return;e.preventDefault();canvas.setPointerCapture(e.pointerId);const lane=pointerLane(e),x=e.clientX-canvas.getBoundingClientRect().left;pointers.set(e.pointerId,{lane,gesture:new FlickGesture(x,e.clientY,e.timeStamp)});press(lane);});
 const playWorkspace=$('play-workspace'),stage=$('stage'),preventBrowserGesture=event=>event.preventDefault();
 for(const type of ['selectstart','contextmenu','dragstart'])stage.addEventListener(type,preventBrowserGesture);
