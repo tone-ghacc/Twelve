@@ -56,6 +56,32 @@ export function notesInEditorRect(notes,start,end,{laneW,x,y}){
   return notes.filter(n=>{const ny=y(n.timeMs),ey=y(n.timeMs+(n.durationMs||0));return intersects(x(n.lane),x(n.lane)+n.width*laneW,Math.min(ny,ey)-5,Math.max(ny,ey)+5)||(n.endFlick&&intersects(x(n.endFlick.lane),x(n.endFlick.lane+n.endFlick.width),ey-12,ey+5));}).map(n=>n.id);
 }
 
+// Apply one lane delta to every selected edge, then validate the whole chart
+// atomically so connections and fixed keyboard groups cannot be broken.
+export function resizeEditorSelection(chart,ids,edge,delta,endFlick=false){
+  if(!['left','right'].includes(edge)||!Number.isInteger(delta))throw new Error('幅の変更はレーン単位で指定してください');
+  const next=structuredClone(chart),selected=new Set(ids);
+  for(const n of next.notes){
+    if(!selected.has(n.id)||(endFlick&&n.type!=='flick-hold'))continue;
+    const span=endFlick?n.endFlick:n;
+    if(edge==='left'){span.lane+=delta;span.width-=delta;}else span.width+=delta;
+    if(span.width<1||span.lane<0||span.lane+span.width>12)throw new Error(`${n.id}: 幅は1レーン以上で、12レーン内に収めてください`);
+  }
+  return validateChartData(next);
+}
+
+// Copy the entire connected component, with links pointing only at copies.
+// The caller keeps this as a drag preview until the move is committed.
+export function duplicateEditorSelection(chart,ids){
+  const selected=new Set(ids),connected=new Set(ids),next=structuredClone(chart);
+  let changed=true;
+  while(changed){changed=false;for(const n of chart.notes)if(n.nextId&&(connected.has(n.id)||connected.has(n.nextId))){for(const id of [n.id,n.nextId])if(!connected.has(id)){connected.add(id);changed=true;}}}
+  const used=new Set(chart.notes.map(n=>n.id)),copies=new Map();let index=chart.notes.length+1;
+  for(const n of chart.notes.filter(n=>connected.has(n.id))){let id;do{id=`note-${String(index++).padStart(3,'0')}`;}while(used.has(id));used.add(id);copies.set(n.id,id);}
+  for(const n of chart.notes.filter(n=>copies.has(n.id))){const copy=structuredClone(n);copy.id=copies.get(n.id);if(copy.nextId)copy.nextId=copies.get(copy.nextId);next.notes.push(copy);}
+  return{chart:next,idMap:copies,selectedIds:new Set([...selected].map(id=>copies.get(id)).filter(Boolean))};
+}
+
 export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio,getAudioInfo,onAuditionStart,onAuditionStop,onAuditionHit}){
   const canvas=$('editor-canvas'),ctx=canvas.getContext('2d'),scroll=$('timeline-scroll'),content=$('timeline-content');
   const form=$('note-form'),empty=$('inspector-empty'),json=$('chart-json'),status=$('editor-status');
@@ -101,7 +127,7 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
   function point(event){const rect=canvas.getBoundingClientRect();return{x:(event.clientX-rect.left)*width/rect.width,y:renderTop+(event.clientY-rect.top)*renderHeight/rect.height};}
   const clamp=(value,min,max)=>Math.max(min,Math.min(max,value));
   const sameNumbers=(a,b)=>a.length===b.length&&a.every((value,index)=>value===b[index]);
-  function resizedCheckpoints(note,newDuration){const current=note.checkpoints??[],automatic=defaultHoldCheckpoints(note.durationMs);return sameNumbers(current,automatic)?defaultHoldCheckpoints(newDuration):current.filter(offset=>offset<newDuration);}
+  function resizedCheckpoints(note,newDuration){const current=note.checkpoints??[],automatic=defaultHoldCheckpoints(note.durationMs);return current.length&&sameNumbers(current,automatic)?defaultHoldCheckpoints(newDuration):current.filter(offset=>offset<newDuration);}
   const pointTime=py=>(timelineHeight()-20-py)/pxPerMs();
   const snapTime=(value,min=0,max=durationMs())=>snapToMeasureDivision(value,chart.timing,snapDivision,min,max);
   const laneAt=px=>{const {laneW}=laneMetrics();return clamp(Math.floor((px-gutter)/laneW),0,11);};
@@ -132,8 +158,8 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
       if(isHold(n)){ctx.fillStyle=purple?'#dfc5ff':'#b9efff';for(const offset of n.checkpoints){const checkpointY=y(n.timeMs+offset);ctx.fillRect(nx+Math.max(2,nw*.08),checkpointY-1,Math.max(2,nw*.84),2);}}
       if(n.type==='flick-hold'){const f=n.endFlick,fx=x(f.lane)+3,fw=f.width*laneW-6,fy=endY;ctx.fillStyle='#b875ff';ctx.fillRect(fx,fy-5,fw,10);ctx.fillStyle='#ead8ff';ctx.textAlign='center';ctx.font='bold 13px Barlow Condensed, sans-serif';ctx.fillText('‹‹‹  ›››',fx+fw/2,fy-8);}
       if(selectedIds.has(n.id)){
-        const top=Math.min(ny,endY),midY=(ny+endY)/2;ctx.strokeStyle='#b9f78d';ctx.lineWidth=2;ctx.strokeRect(nx-3,top-9,nw+6,Math.max(18,duration+14));ctx.fillStyle='#b9f78d';if(selectedIds.size===1){ctx.fillRect(nx-7,midY-8,8,16);ctx.fillRect(nx+nw-1,midY-8,8,16);}
-        if(isHold(n)){const endSpan=n.type==='flick-hold'?n.endFlick:n,ex=x(endSpan.lane)+3,ew=endSpan.width*laneW-6;ctx.strokeRect(ex-3,endY-9,ew+6,18);if(selectedIds.size===1){ctx.fillRect(ex+ew/2-8,endY-4,16,8);if(n.type==='flick-hold'){ctx.fillStyle='#ead8ff';ctx.fillRect(ex-7,endY-8,8,16);ctx.fillRect(ex+ew-1,endY-8,8,16);}}}
+        const top=Math.min(ny,endY),midY=(ny+endY)/2;ctx.strokeStyle='#b9f78d';ctx.lineWidth=2;ctx.strokeRect(nx-3,top-9,nw+6,Math.max(18,duration+14));ctx.fillStyle='#b9f78d';ctx.fillRect(nx-7,midY-8,8,16);ctx.fillRect(nx+nw-1,midY-8,8,16);
+        if(isHold(n)){const endSpan=n.type==='flick-hold'?n.endFlick:n,ex=x(endSpan.lane)+3,ew=endSpan.width*laneW-6;ctx.strokeRect(ex-3,endY-9,ew+6,18);if(selectedIds.size===1)ctx.fillRect(ex+ew/2-8,endY-4,16,8);if(n.type==='flick-hold'){ctx.fillStyle='#ead8ff';ctx.fillRect(ex-7,endY-8,8,16);ctx.fillRect(ex+ew-1,endY-8,8,16);}}
       }
     }
     if(marquee){const left=Math.min(marquee.start.x,marquee.end.x),top=Math.min(marquee.start.y,marquee.end.y),w=Math.abs(marquee.end.x-marquee.start.x),h=Math.abs(marquee.end.y-marquee.start.y);ctx.save();ctx.fillStyle='#b9f78d22';ctx.strokeStyle='#b9f78d';ctx.lineWidth=1.5;ctx.setLineDash([6,4]);ctx.fillRect(left,top,w,h);ctx.strokeRect(left,top,w,h);ctx.restore();}
@@ -167,7 +193,7 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
     $('flick-lane').value=(n.endFlick?.lane??n.lane)+1;$('flick-width').value=n.endFlick?.width??n.width;
     const next=$('note-next'),value=n.nextId||'';next.replaceChildren(new Option('なし',''));for(const x of chart.notes.filter(x=>x.id!==n.id&&isHold(x)))next.add(new Option(`${x.id} · ${(x.timeMs/1000).toFixed(2)}s · ${noteLabel(x)}`,x.id));next.value=value;
   }
-  function selectionStatus(){setStatus(selectedIds.size>1?`${selectedIds.size}個のノーツを選択中 · ドラッグで移動 / Deleteで削除`:selectedId?`${selectedId} を選択中`:'空白をドラッグして範囲選択できます');}
+  function selectionStatus(){setStatus(selectedIds.size>1?`${selectedIds.size}個のノーツを選択中 · 端で幅変更 / Ctrl＋ドラッグで複製 / Deleteで削除`:selectedId?`${selectedId} を選択中 · Ctrl＋ドラッグで複製`:'空白をドラッグして範囲選択できます');}
   function select(id){selectedIds=new Set(id?[id]:[]);renderInspector();draw();selectionStatus();}
   function updateMarquee(event){
     if(!marquee)return;marquee.client={clientX:event.clientX,clientY:event.clientY};marquee.end=point(event);
@@ -189,6 +215,7 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
     if(nearY&&Math.abs(px-left)<=9)return'width-left';if(nearY&&Math.abs(px-right)<=9)return'width-right';return hitTest(px,py)?.id===n.id?'move':null;
   }
   function cursorFor(handle){return handle==='width-left'||handle==='width-right'||handle==='flick-left'||handle==='flick-right'?'ew-resize':handle==='duration'?'ns-resize':handle==='move'?'grab':'default';}
+  function selectionHandle(n,px,py){const handle=editHandle(n,px,py);return selectedIds.size>1&&handle==='duration'?'move':handle;}
   function previewDrag(px,py){
     const {laneW}=laneMetrics(),next=structuredClone(drag.originChart),n=next.notes.find(x=>x.id===drag.id),origin=drag.originChart.notes.find(x=>x.id===drag.id);if(!n||!origin)return;
     if(drag.mode==='move'){
@@ -197,6 +224,10 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
       for(const item of next.notes.filter(x=>ids.has(x.id))){item.timeMs+=timeDelta;item.lane+=laneDelta;if(item.endFlick)item.endFlick.lane+=laneDelta;}
     }else if(drag.mode==='duration'){
       const descendants=drag.downstream,currentLatest=Math.max(origin.timeMs+origin.durationMs,...drag.members.filter(x=>descendants.includes(x.id)).map(x=>x.timeMs+(x.durationMs||0))),maxDuration=origin.durationMs+durationMs()-currentLatest,newDuration=snapHoldDuration(origin.timeMs,pointTime(py),chart.timing,snapDivision,MIN_HOLD_DURATION_MS,maxDuration),delta=newDuration-origin.durationMs;n.checkpoints=resizedCheckpoints(origin,newDuration);n.durationMs=newDuration;for(const item of next.notes.filter(x=>descendants.includes(x.id)))item.timeMs+=delta;
+    }else if(drag.selectionIds?.length>1){
+      try{chart=resizeEditorSelection(drag.originChart,drag.selectionIds,drag.mode.endsWith('left')?'left':'right',Math.round((px-drag.startX)/laneW),drag.mode.startsWith('flick-'));}
+      catch(error){setStatus(error.message,'error');return;}
+      drag.moved=drag.moved||Math.hypot(px-drag.startX,py-drag.startY)>3;renderInspector();draw();return;
     }else{
       const endFlick=drag.mode.startsWith('flick-'),target=endFlick?n.endFlick:n,originalTarget=endFlick?origin.endFlick:origin,limits=drag.limits,boundary=Math.round((px-gutter)/laneW);
       if(drag.mode.endsWith('left')){const right=originalTarget.lane+originalTarget.width;target.lane=clamp(boundary,limits.minLeft,Math.min(right-1,limits.requiredLeft));target.width=right-target.lane;}
@@ -206,7 +237,8 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
   }
   function finishDrag(cancelled=false){
     if(!drag)return;const active=drag,changed=active.moved&&!cancelled,next=structuredClone(chart);drag=null;canvas.style.cursor='default';if(canvas.hasPointerCapture(active.pointerId))canvas.releasePointerCapture(active.pointerId);
-    if(!changed){chart=active.originChart;renderInspector();draw();return;}chart=active.originChart;if(!save(next,'ドラッグ編集を反映しました')){chart=active.originChart;syncJson();renderInspector();draw();}
+    const restore=()=>{chart=active.restoreChart||active.originChart;if(active.restoreSelection)selectedIds=new Set(active.restoreSelection);renderInspector();draw();};
+    if(!changed){restore();return;}chart=active.restoreChart||active.originChart;if(!save(next,active.copy?'Ctrl＋ドラッグで複製しました':'ドラッグ編集を反映しました')){restore();syncJson();}else selectionStatus();
   }
   function placementSpan(active){
     const section=(chart.fixedKeyboardSections||[]).find(s=>active.timeMs>=s.startMs&&active.timeMs<s.endMs);
@@ -214,7 +246,7 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
   }
   function finishPlacement(cancelled=false){
     if(!placing)return;const active=placing;placing=null;if(canvas.hasPointerCapture(active.pointerId))canvas.releasePointerCapture(active.pointerId);canvas.style.cursor=tool==='select'?'default':'crosshair';if(cancelled){draw();return;}
-    const span=placementSpan(active),critical=active.type==='critical-tap',note={id:nextId(),type:critical?'tap':active.type,timeMs:active.timeMs,...span,critical};if(isHold(note)){note.durationMs=1000;note.startType='normal';note.checkpoints=defaultHoldCheckpoints(note.durationMs);}if(note.type==='flick-hold')note.endFlick={...span};const next=structuredClone(chart);next.notes.push(note);const label=critical?TYPES['critical-tap']:TYPES[note.type];if(save(next,`${label}を幅${span.width}で配置しました`)){select(note.id);setStatus(`${label}を幅${span.width}で配置しました`,'ok');}
+    const span=placementSpan(active),critical=active.type==='critical-tap',note={id:nextId(),type:critical?'tap':active.type,timeMs:active.timeMs,...span,critical};if(isHold(note)){note.durationMs=1000;note.startType='normal';note.checkpoints=[];}if(note.type==='flick-hold')note.endFlick={...span};const next=structuredClone(chart);next.notes.push(note);const label=critical?TYPES['critical-tap']:TYPES[note.type];if(save(next,`${label}を幅${span.width}で配置しました`)){select(note.id);setStatus(`${label}を幅${span.width}で配置しました`,'ok');}
   }
   canvas.addEventListener('pointerdown',event=>{
     if(event.button!==0||drag||placing||marquee)return;if(audition.state!=='stopped')stopAudition(false,'編集のため再生確認を停止しました');const {x:px,y:py}=point(event);if(tool!=='select'){const lane=laneAt(px),timeMs=snapTime(pointTime(py),0,isHold({type:tool})?Math.max(0,durationMs()-1000):durationMs());placing={pointerId:event.pointerId,type:tool,timeMs,startLane:lane,currentLane:lane};canvas.setPointerCapture(event.pointerId);canvas.style.cursor='ew-resize';draw();event.preventDefault();return;}
@@ -222,9 +254,11 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
     if(!hit){marquee={pointerId:event.pointerId,start:{x:px,y:py},end:{x:px,y:py},previous:new Set(selectedIds),base:event.shiftKey?new Set(selectedIds):new Set(),client:{clientX:event.clientX,clientY:event.clientY},moved:false};canvas.setPointerCapture(event.pointerId);updateMarquee(event);marqueeFrame=requestAnimationFrame(scrollMarquee);event.preventDefault();return;}
     if(event.shiftKey){if(selectedIds.has(hit.id))selectedIds.delete(hit.id);else selectedIds.add(hit.id);renderInspector();draw();selectionStatus();event.preventDefault();return;}
     if(!selectedIds.has(hit.id))select(hit.id);
-    const n=noteById(hit.id),mode=selectedIds.size>1?'move':editHandle(n,px,py)||'move',ids=new Set([...selectedIds].flatMap(id=>[...connectedIds(id)])),members=chart.notes.filter(x=>ids.has(x.id)),spans=members.flatMap(x=>x.endFlick?[x,x.endFlick]:[x]);drag={pointerId:event.pointerId,id:n.id,mode,startX:px,startY:py,originChart:structuredClone(chart),connected:ids,members:structuredClone(members),spans:structuredClone(spans),downstream:downstreamIds(n),limits:widthLimits(n,mode.startsWith('flick-')),moved:false};canvas.setPointerCapture(event.pointerId);canvas.style.cursor=mode==='move'?'grabbing':cursorFor(mode);event.preventDefault();
+    let n=noteById(hit.id);const copy=event.ctrlKey,mode=copy?'move':selectionHandle(n,px,py)||'move',restoreChart=copy?structuredClone(chart):null,restoreSelection=copy?[...selectedIds]:null;
+    if(copy){const duplicated=duplicateEditorSelection(chart,selectedIds);chart=duplicated.chart;selectedIds=duplicated.selectedIds;n=noteById(duplicated.idMap.get(hit.id));renderInspector();draw();}
+    const ids=new Set([...selectedIds].flatMap(id=>[...connectedIds(id)])),members=chart.notes.filter(x=>ids.has(x.id)),spans=members.flatMap(x=>x.endFlick?[x,x.endFlick]:[x]);drag={pointerId:event.pointerId,id:n.id,mode,copy,restoreChart,restoreSelection,selectionIds:[...selectedIds],startX:px,startY:py,originChart:structuredClone(chart),connected:ids,members:structuredClone(members),spans:structuredClone(spans),downstream:downstreamIds(n),limits:widthLimits(n,mode.startsWith('flick-')),moved:false};canvas.setPointerCapture(event.pointerId);canvas.style.cursor=mode==='move'?'grabbing':cursorFor(mode);event.preventDefault();
   });
-  canvas.addEventListener('pointermove',event=>{if(marquee&&event.pointerId===marquee.pointerId){updateMarquee(event);event.preventDefault();return;}const {x:px,y:py}=point(event);if(placing&&event.pointerId===placing.pointerId){placing.currentLane=laneAt(px);const span=placementSpan(placing);setStatus(`${TYPES[placing.type]} · レーン ${span.lane+1}〜${span.lane+span.width} · 幅${span.width}`);draw();event.preventDefault();return;}if(drag&&event.pointerId===drag.pointerId){previewDrag(px,py);event.preventDefault();return;}const n=noteById(selectedId);canvas.style.cursor=selectedIds.size>1&&selectedIds.has(hitTest(px,py)?.id)?'grab':tool==='select'&&n?cursorFor(editHandle(n,px,py)):'crosshair';});
+  canvas.addEventListener('pointermove',event=>{if(marquee&&event.pointerId===marquee.pointerId){updateMarquee(event);event.preventDefault();return;}const {x:px,y:py}=point(event);if(placing&&event.pointerId===placing.pointerId){placing.currentLane=laneAt(px);const span=placementSpan(placing);setStatus(`${TYPES[placing.type]} · レーン ${span.lane+1}〜${span.lane+span.width} · 幅${span.width}`);draw();event.preventDefault();return;}if(drag&&event.pointerId===drag.pointerId){previewDrag(px,py);event.preventDefault();return;}const hovered=hitTest(px,py),n=selectedIds.has(hovered?.id)?hovered:noteById(selectedId);canvas.style.cursor=tool==='select'&&n?cursorFor(selectionHandle(n,px,py)):'crosshair';});
   canvas.addEventListener('pointerup',event=>{if(marquee&&event.pointerId===marquee.pointerId){updateMarquee(event);finishMarquee();return;}if(placing&&event.pointerId===placing.pointerId){placing.currentLane=laneAt(point(event).x);finishPlacement();return;}if(drag&&event.pointerId===drag.pointerId)finishDrag();});
   function cancelPointer(event){if(marquee&&event.pointerId===marquee.pointerId)finishMarquee(true);if(placing&&event.pointerId===placing.pointerId)finishPlacement(true);if(drag&&event.pointerId===drag.pointerId)finishDrag(true);}
   canvas.addEventListener('pointercancel',cancelPointer);canvas.addEventListener('lostpointercapture',cancelPointer);
@@ -248,7 +282,7 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
     if(isHold(n)){
       const nextDuration=Number($('note-duration').value);n.durationMs=nextDuration;n.nextId=$('note-next').value||undefined;
       n.startType=wasHold?$('hold-start-type').value:'normal';if(n.startType==='scratch')n.critical=false;
-      try{n.checkpoints=wasHold?(nextDuration===current.durationMs?parseCheckpoints($('hold-checkpoints').value):resizedCheckpoints(current,nextDuration)):defaultHoldCheckpoints(nextDuration);}catch(error){setStatus(error.message,'error');renderInspector();return;}
+      try{n.checkpoints=wasHold?(nextDuration===current.durationMs?parseCheckpoints($('hold-checkpoints').value):resizedCheckpoints(current,nextDuration)):[];}catch(error){setStatus(error.message,'error');renderInspector();return;}
     }else{delete n.durationMs;delete n.nextId;delete n.startType;delete n.checkpoints;for(const x of next.notes)if(x.nextId===n.id)delete x.nextId;}
     if(n.type==='flick-hold')n.endFlick=oldType==='flick-hold'?{lane:Number($('flick-lane').value)-1,width:Number($('flick-width').value)}:{lane:n.lane,width:n.width};else delete n.endFlick;
     save(next);
@@ -262,6 +296,7 @@ export function initEditor({getChart,setChart,onPreview,onAudioFile,onClearAudio
   });
   function deleteSelection(){if(!selectedIds.size)return;const removed=new Set(selectedIds),next=structuredClone(chart);next.notes=next.notes.filter(n=>!removed.has(n.id));for(const n of next.notes)if(removed.has(n.nextId))delete n.nextId;if(save(next,`${removed.size}個のノーツを削除しました`)){select(null);setStatus(`${removed.size}個のノーツを削除しました`,'ok');}}
   $('delete-note').addEventListener('click',deleteSelection);$('delete-selection').addEventListener('click',deleteSelection);$('clear-selection').addEventListener('click',()=>select(null));
+  for(const [id,delta] of [['selection-width-grow',1],['selection-width-shrink',-1]])$(id).addEventListener('click',()=>{try{save(resizeEditorSelection(chart,selectedIds,'right',delta),`選択ノーツの幅を${delta>0?'1レーン広げ':'1レーン狭め'}ました`);}catch(error){setStatus(error.message,'error');}});
 
   $('chart-title').addEventListener('change',()=>{const next=structuredClone(chart);next.metadata.title=$('chart-title').value;save(next,'曲名を更新しました');});
   $('add-fixed-keyboard').addEventListener('click',()=>{

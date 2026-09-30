@@ -76,6 +76,7 @@ function drawKeyBeams(view,now){
   }
 }
 function draw(now){
+  if(width<=0||height<=0)return;
   const view=createPerspective(width,height,playSettings),laneW=(view.laneX(1,1)-view.laneX(0,1)),{hitY,judgementTop,judgementBottom,judgementHeight,judgementTopProgress,judgementBottomProgress,stageBottomProgress,topY,travel,visibleY,visibleProgress}=view;
   const keyboardTime=elapsed+(phase==='ended'?(now-endedAt)/1000:0);if(phase!=='ready')game.fixedKeyboard.update(keyboardTime);
   ctx.clearRect(0,0,width,height);ctx.fillStyle='#090f18';ctx.fillRect(0,0,width,height);

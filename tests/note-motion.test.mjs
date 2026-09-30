@@ -33,6 +33,9 @@ for(const [width,height] of [[360,640],[1200,700]])for(const noteSpeed of [1,10,
 // Execute the real drawing function so pending hold/flick caps cannot silently
 // reintroduce a clamp at the judgement line while the projection tests pass.
 const source=readFileSync(new URL('../dist/app.js',import.meta.url),'utf8'),drawSource=source.slice(source.indexOf('function draw(now){'),source.indexOf('function frame(now){'));
+// Direct #editor loads hide the playback canvas before its first resize.
+// Avoid non-finite projection coordinates breaking the animation loop.
+for(const [width,height] of [[0,0],[0,700],[1200,0]])vm.runInNewContext(drawSource+'\ndraw(0);',{width,height});
 function renderedCaps(note,elapsed){
   const caps=[],ctx=new Proxy({createLinearGradient:()=>({addColorStop(){}})},{get:(object,key)=>object[key]??(()=>{}),set:(object,key,value)=>{object[key]=value;return true;}});
   const scope=vm.createContext({width:1200,height:700,playSettings:{noteSpeed:10,noteStartPosition:0,noteThickness:100},elapsed,phase:'paused',endedAt:0,ctx,game:{notes:[note],auto:false,fixedKeyboard:{update(){}}},effects:[],held:()=>new Set(),LABELS:Array(12).fill(''),createPerspective,perspectiveMetrics,noteSpanAt,flickSpan,drawFixedKeyboardStage(){},drawFixedKeyboardSweeps(){},drawKeyBeams(){},drawFlickArrows(){},fillProjectedBar:(view,span,point,height,color)=>caps.push({...point,height,color})});
